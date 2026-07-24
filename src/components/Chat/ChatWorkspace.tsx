@@ -83,7 +83,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     setSelectedImages(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleCommitAutomationDirect = async (tc: AIToolCall) => {
+  const handleCommitAutomationDirect = async (tc: AIToolCall, skipSyncAndNotify = false) => {
     setCommittedTools(prev => ({ ...prev, [tc.id]: true }));
     setCommitStatus(prev => ({ ...prev, [tc.id]: 'Applying live update & tidying up...' }));
 
@@ -91,15 +91,32 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       const res = await executeHATool(tc);
       if (res.success) {
         setCommitStatus(prev => ({ ...prev, [tc.id]: '✓ Applied Live to Home Assistant!' }));
-        await LocalPreProcessor.syncDigitalTwin().catch(() => {});
-        const alias = tc.arguments?.alias || 'Automation';
-        onSendMessage(`Successfully committed "${alias}" to Home Assistant and updated local Digital Twin!`);
+        if (!skipSyncAndNotify) {
+          await LocalPreProcessor.syncDigitalTwin().catch(() => {});
+          const alias = tc.arguments?.alias || tc.arguments?.name || tc.name || 'Automation';
+          onSendMessage(`Successfully committed "${alias}" to Home Assistant and updated local Digital Twin!`);
+        }
+        return true;
       } else {
         setCommitStatus(prev => ({ ...prev, [tc.id]: `Error: ${res.error || 'Failed to update'}` }));
+        return false;
       }
     } catch (err: any) {
       setCommitStatus(prev => ({ ...prev, [tc.id]: `Error: ${err.message || 'API Call failed'}` }));
+      return false;
     }
+  };
+
+  const handleCommitAllBatch = async (toolCalls: AIToolCall[]) => {
+    const uncommitted = toolCalls.filter(tc => !committedTools[tc.id]);
+    if (uncommitted.length === 0) return;
+
+    for (const tc of uncommitted) {
+      await handleCommitAutomationDirect(tc, true);
+    }
+
+    await LocalPreProcessor.syncDigitalTwin().catch(() => {});
+    onSendMessage(`Successfully committed all ${uncommitted.length} actions in order to Home Assistant and updated local Digital Twin!`);
   };
 
   const cleanMessageText = (content: string, hasToolCards: boolean) => {
@@ -280,21 +297,59 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                   )}
 
                   {/* Render 1-Click Action Tool Cards */}
-                  {msg.toolCalls && msg.toolCalls.map((tc) => {
-                    const statusText = commitStatus[tc.id];
-                    const isCommitted = Boolean(committedTools[tc.id]);
-
+                  {msg.toolCalls && msg.toolCalls.length > 0 && (() => {
+                    const uncommittedCount = msg.toolCalls.filter(tc => !committedTools[tc.id]).length;
                     return (
-                      <div
-                        key={tc.id}
-                        style={{
-                          marginTop: '4px',
-                          backgroundColor: '#0f172a',
-                          border: '1px solid #1e293b',
-                          borderRadius: '12px',
-                          overflow: 'hidden'
-                        }}
-                      >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                        {msg.toolCalls.length > 1 && uncommittedCount > 0 && (
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '10px 16px',
+                            backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                            border: '1px solid rgba(59, 130, 246, 0.3)',
+                            borderRadius: '10px'
+                          }}>
+                            <div style={{ fontSize: '12px', fontWeight: 600, color: '#60a5fa' }}>
+                              📋 {uncommittedCount} of {msg.toolCalls.length} Action{msg.toolCalls.length !== 1 ? 's' : ''} Pending Review
+                            </div>
+                            <button
+                              onClick={() => handleCommitAllBatch(msg.toolCalls!)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '6px 14px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                borderRadius: '6px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                backgroundColor: '#3b82f6',
+                                color: '#ffffff',
+                                boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)'
+                              }}
+                            >
+                              <Zap size={14} fill="#ffffff" />
+                              ⚡ Commit All ({uncommittedCount}) in Order
+                            </button>
+                          </div>
+                        )}
+                        {msg.toolCalls.map((tc) => {
+                          const statusText = commitStatus[tc.id];
+                          const isCommitted = Boolean(committedTools[tc.id]);
+
+                          return (
+                            <div
+                              key={tc.id}
+                              style={{
+                                backgroundColor: '#0f172a',
+                                border: '1px solid #1e293b',
+                                borderRadius: '12px',
+                                overflow: 'hidden'
+                              }}
+                            >
                         <div style={{
                           padding: '12px 16px',
                           backgroundColor: '#1e293b',
@@ -454,6 +509,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                       </div>
                     );
                   })}
+                </div>
+              );
+            })()}
                 </div>
               </div>
             );

@@ -457,10 +457,16 @@ ${JSON.stringify(cfg.action || [], null, 2)}`;
     const entityLine = (e: InferredDevice) =>
       `  • [${e.areaName || 'Global'}] "${e.name}" (${e.entity_id}) -> ${e.state.toUpperCase()}`;
 
+    const lovelaceSummary = twin.lovelaceConfig
+      ? JSON.stringify(twin.lovelaceConfig, null, 2)
+      : '{"title": "Home Assistant", "views": []}';
+
     const header = `
 ================================================================================
 HOME ASSISTANT DIGITAL TWIN — SOURCE OF TRUTH (Updated: ${twin.lastUpdated})
 Detected Intent: ${intent} | ${intentResult.reasoning}
+CURRENT LIVE DASHBOARD CONFIG (Lovelace):
+${lovelaceSummary}
 ================================================================================
 `;
 

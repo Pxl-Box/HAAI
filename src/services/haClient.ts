@@ -253,9 +253,35 @@ export class HAService {
   }
 
   public async assignEntityToArea(entityId: string, areaId: string | null): Promise<any> {
+    let targetAreaId = areaId;
+
+    if (areaId) {
+      const areas = await this.getAreas().catch(() => []);
+      const matched = areas.find(a =>
+        a.area_id === areaId ||
+        a.area_id === areaId.toLowerCase().replace(/[^a-z0-9]/g, '_') ||
+        a.name.toLowerCase() === areaId.toLowerCase()
+      );
+
+      if (matched) {
+        targetAreaId = matched.area_id;
+      } else {
+        // If the target area doesn't exist yet (e.g. "old" or "front_door"), auto-create it!
+        try {
+          const formattedName = areaId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+          const created = await this.createArea(formattedName);
+          if (created && created.area_id) {
+            targetAreaId = created.area_id;
+          }
+        } catch {
+          // ignore create error and proceed
+        }
+      }
+    }
+
     return await this.sendWebSocketCommand('config/entity_registry/update', {
       entity_id: entityId,
-      area_id: areaId
+      area_id: targetAreaId
     });
   }
 
@@ -388,22 +414,65 @@ export class HAService {
   }
 
   /**
-   * Update Live Lovelace Dashboard directly in Home Assistant
+   * Create a new distinct Dashboard in Home Assistant's Dashboard Registry (lovelace/dashboards/create)
+   */
+  public async createNewDashboard(title: string, icon: string = 'mdi:view-dashboard', urlPath?: string): Promise<{ success: boolean; message: string }> {
+    const slug = urlPath || title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+
+    try {
+      await this.sendWebSocketCommand('lovelace/dashboards/create', {
+        title,
+        icon,
+        url_path: slug,
+        require_admin: false,
+        show_in_sidebar: true,
+        mode: 'storage'
+      });
+
+      return { success: true, message: `Successfully created new Home Assistant sidebar dashboard "${title}" (/lovelace-${slug})!` };
+    } catch (err: any) {
+      // If dashboard already exists or WebSocket error occurs
+      if (err.message && err.message.includes('already_exists')) {
+        return { success: true, message: `Dashboard "${title}" is already registered in Home Assistant sidebar.` };
+      }
+      throw new Error(`Failed to create dashboard in Home Assistant registry: ${err.message}`);
+    }
+  }
+
+  /**
+   * Update Live Lovelace Dashboard directly in Home Assistant.
+   * Tries REST API POST /api/lovelace/config first, then WebSocket lovelace/config/save fallback.
    */
   public async updateLovelaceConfig(config: HALovelaceConfig): Promise<{ success: boolean; message: string }> {
     const cfg = this.getConfig();
     if (!cfg) throw new Error('HA Not Configured');
-    const response = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/api/lovelace/config`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${cfg.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(config)
-    });
-    if (!response.ok) throw new Error(`Failed to save live Lovelace config (${response.status})`);
-    return { success: true, message: 'Successfully updated live Home Assistant Lovelace Dashboard!' };
+
+    try {
+      const response = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/api/lovelace/config`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${cfg.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(config)
+      });
+
+      if (response.ok) {
+        return { success: true, message: 'Successfully updated live Home Assistant Lovelace Dashboard!' };
+      }
+    } catch (e) {
+      // Fallback to WebSocket
+    }
+
+    // WebSocket fallback for Home Assistant instances where REST dashboard endpoint returns 404 (YAML / uninitialized mode)
+    try {
+      await this.sendWebSocketCommand('lovelace/config/save', { config });
+      return { success: true, message: 'Successfully updated live Home Assistant Lovelace Dashboard via WebSocket!' };
+    } catch (wsErr: any) {
+      throw new Error(`Failed to save live Lovelace config (${wsErr.message || '404/WebSocket failed'})`);
+    }
   }
 }
 
 export const haService = new HAService();
+

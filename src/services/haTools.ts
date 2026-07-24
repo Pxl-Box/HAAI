@@ -284,8 +284,29 @@ action: ${JSON.stringify(args.action, null, 2)}`;
         };
       }
 
+      case 'create_new_dashboard': {
+        const title = args.title || 'New Dashboard';
+        const icon = args.icon || 'mdi:view-dashboard';
+        const urlPath = args.urlPath || args.url_path;
+
+        const regRes = await haService.createNewDashboard(title, icon, urlPath);
+
+        // Also save initial Lovelace view cards config if provided
+        if (args.config) {
+          await haService.updateLovelaceConfig(args.config).catch(() => {});
+        }
+
+        return {
+          toolCallId: id,
+          name,
+          success: true,
+          result: { message: regRes.message }
+        };
+      }
+
       case 'update_dashboard_config': {
-        const liveRes = await haService.updateLovelaceConfig(args.config);
+        const dashboardConfig = args.config || args;
+        const liveRes = await haService.updateLovelaceConfig(dashboardConfig);
         return {
           toolCallId: id,
           name,
@@ -363,6 +384,7 @@ action: ${JSON.stringify(args.action, null, 2)}`;
 
       case 'assign_to_area': {
         const assigned: string[] = [];
+        const warnings: string[] = [];
         const errors: string[] = [];
 
         if (args.deviceIds && Array.isArray(args.deviceIds)) {
@@ -382,20 +404,30 @@ action: ${JSON.stringify(args.action, null, 2)}`;
               await haService.assignEntityToArea(entityId, args.areaId);
               assigned.push(`entity:${entityId}`);
             } catch (e: any) {
-              errors.push(`Entity "${entityId}": ${e.message}`);
+              // In Home Assistant, newly created automations aren't always immediately present in entity_registry
+              if (e.message && (e.message.includes('not_found') || e.message.includes('No entity found'))) {
+                warnings.push(`Entity "${entityId}" registered via YAML — Home Assistant will assign its area on next reload.`);
+              } else {
+                errors.push(`Entity "${entityId}": ${e.message}`);
+              }
             }
           }
         }
 
+        const isSuccess = errors.length === 0;
         return {
           toolCallId: id,
           name,
-          success: errors.length === 0,
+          success: isSuccess,
           result: {
-            message: `Successfully assigned ${assigned.length} item(s) to area.`,
+            message: isSuccess
+              ? `Successfully assigned ${assigned.length} item(s) to area.`
+              : `Assignment notice: ${errors.join(', ')}`,
             assigned,
+            warnings: warnings.length > 0 ? warnings : undefined,
             errors: errors.length > 0 ? errors : undefined
-          }
+          },
+          error: isSuccess ? undefined : errors.join(', ')
         };
       }
 

@@ -173,8 +173,19 @@ async def handle_automation_post(request):
   print(f"========================================================\n")
   return web.json_response({"result": "ok", "automation_id": auto_id})
 
+LOVELACE_CONFIG = {"title": "Test Dashboard", "views": []}
+
 async def handle_lovelace_config(request):
-  return web.json_response({"title": "Test Dashboard", "views": []})
+  return web.json_response(LOVELACE_CONFIG)
+
+async def handle_lovelace_config_post(request):
+  global LOVELACE_CONFIG
+  body = await request.json()
+  LOVELACE_CONFIG = body
+  print(f"\n========================================================")
+  print(f"[TEST HA LOVELACE DASHBOARD SAVED] -> {json.dumps(body, indent=2)}")
+  print(f"========================================================\n")
+  return web.json_response({"result": "ok"})
 
 # WebSocket handler with full CRUD support for floors and areas
 async def handle_websocket(request):
@@ -243,6 +254,12 @@ async def handle_websocket(request):
             if 'floor_id' in data: target['floor_id'] = data['floor_id']
           await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": target})
 
+        # --- LOVELACE / DASHBOARD ---
+        elif msg_type == 'lovelace/config/save':
+          cfg_data = data.get('config')
+          print(f"⚡ [TEST HA SAVE LOVELACE CONFIG] {json.dumps(cfg_data, indent=2)}")
+          await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": None})
+
         # --- OTHER REGISTRIES ---
         elif msg_type == 'config/device_registry/list':
           await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": DEVICES})
@@ -267,6 +284,7 @@ app.router.add_get('/api/config/automation/config/{automation_id}', handle_autom
 app.router.add_post('/api/config/automation/config/{automation_id}', handle_automation_post)
 app.router.add_post('/api/config/automation/config', handle_automation_post)
 app.router.add_get('/api/lovelace/config', handle_lovelace_config)
+app.router.add_post('/api/lovelace/config', handle_lovelace_config_post)
 app.router.add_get('/api/websocket', handle_websocket)
 
 if __name__ == '__main__':
