@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Production builds & output
+dist/
+dist-electron/
+release/
+*.exe
+*.AppImage
+*.deb
+
+# Environment & local secrets
+.env
+.env.local
+.env.development
+.env.production
+*.pem
+
+# Editor & OS system metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Log & temp data
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
