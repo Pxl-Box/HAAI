@@ -1,122 +1,296 @@
 import { haService } from './haClient';
+import { StorageService, HADigitalTwin } from './storage';
 import { HAState } from '../types/homeassistant';
 
-export interface HAIndex {
-  entitiesByDomain: Record<string, HAState[]>;
+export interface HALocalIndex {
   allEntities: HAState[];
-  automations: HAState[];
-  scripts: HAState[];
-  scenes: HAState[];
-  areas: Record<string, string[]>;
-  hacsComponents: string[];
   healthStatus: {
     offlineCount: number;
-    staleCount: number;
     batteryLowCount: number;
+    offlineEntities: string[];
   };
-  lastIndexed: number;
+  hacsComponents: string[];
 }
 
 export interface InferredDevice {
-  inferredCategory: 'Physical Light' | 'Camera Light / Infrared' | 'Switch / Plug' | 'Climate / HVAC' | 'Sensor' | 'System / Helper' | 'Zone' | 'Automation / Rule' | 'Security / Lock';
+  inferredCategory: string;
   entity_id: string;
   name: string;
   state: string;
   areaName?: string;
+  isAssignedToArea?: boolean;
   originalDomain: string;
   batteryLevel?: number;
   suggestedAction?: string;
+  notes?: string;
+  rawAttributes?: any;
+  fullConfig?: any;
 }
 
-export class LocalPreProcessor {
-  private static cache: HAIndex | null = null;
-  private static CACHE_TTL_MS = 15000;
+// ─────────────────────────────────────────────────────────────────────────────
+// INTENT CLASSIFIER
+// Reads the user's prompt and determines which mode the AI should operate in.
+// ─────────────────────────────────────────────────────────────────────────────
 
-  public static async getIndex(): Promise<HAIndex> {
-    const now = Date.now();
-    if (this.cache && (now - this.cache.lastIndexed) < this.CACHE_TTL_MS) {
-      return this.cache;
+export type UserIntent = 'CREATE' | 'REFACTOR' | 'EDIT';
+
+export interface IntentResult {
+  intent: UserIntent;
+  /** Automation raw IDs (without 'automation.' prefix) that the user is referencing */
+  targetAutomationIds: string[];
+  /** Entity IDs mentioned in the prompt */
+  targetEntityIds: string[];
+  /** Human-readable summary of what was detected */
+  reasoning: string;
+}
+
+const CREATE_SIGNALS = [
+  'create', 'new', 'build', 'make', 'add', 'set up', 'setup', 'write',
+  'automate', 'generate', 'design', 'configure', 'define', 'draft'
+];
+
+const REFACTOR_SIGNALS = [
+  'refactor', 'clean', 'cleaning', 'tidy', 'organise', 'organize',
+  'rename', 'restructure', 'sort', 'group', 'move to area', 'categorise',
+  'categorize', 'assign to', 'ungrouped', 'sort out'
+];
+
+const EDIT_SIGNALS = [
+  'edit', 'update', 'change', 'modify', 'fix', 'adjust', 'tweak',
+  'repair', 'correct', 'improve', 'extend', 'append', 'add to',
+  'remove from', 'replace', 'it keeps', 'broken', 'not working', 'wrong'
+];
+
+export class IntentClassifier {
+  /**
+   * Classify user intent and extract referenced automation/entity IDs from the prompt
+   * against the live Digital Twin.
+   */
+  public static classify(prompt: string, twin: HADigitalTwin): IntentResult {
+    const lower = prompt.toLowerCase();
+
+    // Score each intent category
+    const createScore  = CREATE_SIGNALS.filter(w => lower.includes(w)).length;
+    const refactorScore = REFACTOR_SIGNALS.filter(w => lower.includes(w)).length;
+    const editScore    = EDIT_SIGNALS.filter(w => lower.includes(w)).length;
+
+    let intent: UserIntent;
+    if (refactorScore > createScore && refactorScore >= editScore) {
+      intent = 'REFACTOR';
+    } else if (editScore > createScore) {
+      intent = 'EDIT';
+    } else if (createScore > 0) {
+      intent = 'CREATE';
+    } else {
+      // Default: treat ambiguous prompts mentioning automation names as EDIT
+      // and truly unknown prompts as CREATE
+      intent = 'EDIT';
     }
 
-    const states = await haService.getStates();
-    const entitiesByDomain: Record<string, HAState[]> = {};
-    const automations: HAState[] = [];
-    const scripts: HAState[] = [];
-    const scenes: HAState[] = [];
+    // --- Match mentioned automations ---
+    const targetAutomationIds: string[] = [];
+    const allAutoIds = Object.keys(twin.automationConfigs || {});
 
-    let offlineCount = 0;
-    let batteryLowCount = 0;
-
-    states.forEach(s => {
-      const [domain] = s.entity_id.split('.');
-      if (!entitiesByDomain[domain]) entitiesByDomain[domain] = [];
-      entitiesByDomain[domain].push(s);
-
-      if (domain === 'automation') automations.push(s);
-      if (domain === 'script') scripts.push(s);
-      if (domain === 'scene') scenes.push(s);
-
-      if (s.state === 'unavailable' || s.state === 'unknown') {
-        offlineCount++;
-      }
-
-      if (s.attributes.battery_level !== undefined && Number(s.attributes.battery_level) < 20) {
-        batteryLowCount++;
+    allAutoIds.forEach(rawId => {
+      const cfg = twin.automationConfigs[rawId];
+      const alias = (cfg?.alias || rawId).toLowerCase();
+      const rawLower = rawId.toLowerCase().replace(/_/g, ' ');
+      if (lower.includes(alias) || lower.includes(rawLower) || lower.includes(rawId.replace(/_/g, ' '))) {
+        targetAutomationIds.push(rawId);
       }
     });
 
-    this.cache = {
-      entitiesByDomain,
-      allEntities: states,
-      automations,
-      scripts,
-      scenes,
-      areas: {
-        'Living Room': ['light.livingroom_front', 'light.livingroom_rear', 'climate.living_room_thermostat'],
-        'Kitchen': ['light.kitchen_light', 'switch.kitchen_coffee_maker'],
-        'Bedroom': ['light.bedroom_lights_group', 'input_boolean.bedroom_wardrobe_auto']
-      },
-      hacsComponents: ['Browser Mod', 'Card Mod', 'Mini Media Player', 'Mushroom Cards', 'ApexCharts Card'],
-      healthStatus: {
-        offlineCount,
-        staleCount: 0,
-        batteryLowCount
-      },
-      lastIndexed: now
+    // Also scan automation states by friendly name
+    const automationStates = (twin.states || []).filter(s => s.entity_id.startsWith('automation.'));
+    automationStates.forEach(s => {
+      const name = (s.attributes?.friendly_name || '').toLowerCase();
+      const rawId = s.entity_id.replace('automation.', '');
+      if (name && lower.includes(name) && !targetAutomationIds.includes(rawId)) {
+        targetAutomationIds.push(rawId);
+      }
+    });
+
+    // --- Match mentioned entity IDs ---
+    const targetEntityIds: string[] = [];
+    (twin.states || []).forEach(s => {
+      const eid = s.entity_id.toLowerCase();
+      const name = (s.attributes?.friendly_name || '').toLowerCase();
+      if (lower.includes(eid) || (name.length > 3 && lower.includes(name))) {
+        targetEntityIds.push(s.entity_id);
+      }
+    });
+
+    const reasoning = `Intent: ${intent} | Automation matches: [${targetAutomationIds.join(', ') || 'none'}] | Entity matches: [${targetEntityIds.slice(0, 8).join(', ') || 'none'}]`;
+
+    return { intent, targetAutomationIds, targetEntityIds, reasoning };
+  }
+}
+
+export class LocalPreProcessor {
+  /**
+   * DIGITAL TWIN SYNCHRONIZER:
+   * Fetches fresh live states, Lovelace dashboard config, and raw automation YAML configs from Home Assistant,
+   * updates the local Digital Twin cache (Source of Truth), and returns the synchronized index.
+   */
+  public static async syncDigitalTwin(): Promise<HADigitalTwin> {
+    console.log('[Digital Twin] Syncing local Home Assistant Digital Twin...');
+    const states = await haService.getStates();
+    const lovelaceConfig = await haService.getLovelaceConfig().catch(() => null);
+    const areas = await haService.getAreas().catch(() => []);
+    const floors = await haService.getFloors().catch(() => []);
+    const devices = await haService.getDevices().catch(() => []);
+    const entityRegistry = await haService.getEntityRegistry().catch(() => []);
+
+    const automations = states.filter(s => s.entity_id.startsWith('automation.'));
+    const automationConfigs: Record<string, any> = {};
+
+    await Promise.all(
+      automations.map(async a => {
+        const rawId = a.entity_id.replace('automation.', '');
+        const cfg = await haService.getAutomationConfig(rawId);
+        if (cfg) {
+          automationConfigs[rawId] = cfg;
+        } else if (a.attributes) {
+          automationConfigs[rawId] = {
+            id: rawId,
+            alias: a.attributes.friendly_name || rawId,
+            trigger: a.attributes.trigger || [],
+            condition: a.attributes.condition || [],
+            action: a.attributes.action || []
+          };
+        }
+      })
+    );
+
+    const twin: HADigitalTwin = {
+      lastUpdated: new Date().toISOString(),
+      states,
+      lovelaceConfig,
+      automationConfigs,
+      areas,
+      floors,
+      devices,
+      entityRegistry,
+      entityCount: states.length
     };
 
-    return this.cache;
+    StorageService.saveDigitalTwin(twin);
+    return twin;
   }
 
-  /**
-   * Smart Device & Area Inference Engine
-   */
-  public static inferDeviceType(entity: HAState, index: HAIndex): InferredDevice {
-    const id = entity.entity_id.toLowerCase();
-    const name = (entity.attributes.friendly_name || entity.entity_id).toLowerCase();
-    const [domain] = id.split('.');
+  public static async getIndex(): Promise<HALocalIndex> {
+    let twin = StorageService.getDigitalTwin();
 
-    // Deduce Area Assignment
-    let inferredArea = 'General / Unassigned';
-    for (const [area, eList] of Object.entries(index.areas)) {
-      if (eList.includes(entity.entity_id) || name.includes(area.toLowerCase()) || id.includes(area.toLowerCase().replace(' ', ''))) {
-        inferredArea = area;
-        break;
+    // If cache missing or older than 5 minutes, run live Digital Twin Sync
+    if (!twin || !twin.states || twin.states.length === 0) {
+      twin = await this.syncDigitalTwin();
+    }
+
+    const states = twin.states;
+    const offlineEntities = states.filter(s => s.state === 'unavailable' || s.state === 'unknown');
+    const batteryEntities = states.filter(s => {
+      const bat = s.attributes.battery_level ?? s.attributes.battery;
+      return typeof bat === 'number' && bat < 20;
+    });
+
+    const hacsCards = new Set<string>();
+    states.forEach(s => {
+      const str = JSON.stringify(s.attributes).toLowerCase();
+      if (str.includes('mushroom')) hacsCards.add('Mushroom Cards');
+      if (str.includes('card-mod') || str.includes('card_mod')) hacsCards.add('Card Mod');
+      if (str.includes('mini-media-player')) hacsCards.add('Mini Media Player');
+      if (str.includes('browser_mod')) hacsCards.add('Browser Mod');
+      if (str.includes('apexcharts')) hacsCards.add('ApexCharts Card');
+    });
+
+    return {
+      allEntities: states,
+      healthStatus: {
+        offlineCount: offlineEntities.length,
+        batteryLowCount: batteryEntities.length,
+        offlineEntities: offlineEntities.map(e => e.entity_id)
+      },
+      hacsComponents: Array.from(hacsCards)
+    };
+  }
+
+  public static inferDeviceType(entity: HAState, index: HALocalIndex): InferredDevice {
+    const twin = StorageService.getDigitalTwin();
+    const entityId = entity.entity_id.toLowerCase();
+    const rawFriendlyName = entity.attributes.friendly_name || '';
+    const friendlyName = rawFriendlyName.toLowerCase();
+    const domain = entityId.split('.')[0];
+    const battery = entity.attributes.battery_level ?? entity.attributes.battery;
+
+    let inferredArea = 'UNGROUPED (NO AREA ASSIGNED)';
+    let isAssignedToArea = false;
+
+    // 1. Official Registry Area Lookup (First Priority)
+    if (twin && twin.entityRegistry && twin.areas) {
+      const regEntry = twin.entityRegistry.find((e: any) => e.entity_id === entity.entity_id);
+      let areaId = regEntry?.area_id;
+
+      // Check device area if entity area not explicitly set
+      if (!areaId && regEntry?.device_id && twin.devices) {
+        const devEntry = twin.devices.find((d: any) => d.id === regEntry.device_id);
+        areaId = devEntry?.area_id;
+      }
+
+      if (areaId) {
+        const areaObj = twin.areas.find((a: any) => a.area_id === areaId);
+        if (areaObj) {
+          inferredArea = areaObj.name;
+          isAssignedToArea = true;
+        }
       }
     }
 
-    const battery = entity.attributes.battery_level ? Number(entity.attributes.battery_level) : undefined;
+    // 2. Friendly Name Prefix / Convention Fallback
+    if (!isAssignedToArea) {
+      if (rawFriendlyName.includes(':')) {
+        inferredArea = rawFriendlyName.split(':')[0].trim();
+        isAssignedToArea = true;
+      } else if (rawFriendlyName.startsWith('[')) {
+        const match = rawFriendlyName.match(/^\[(.*?)\]/);
+        if (match) {
+          inferredArea = match[1].trim();
+          isAssignedToArea = true;
+        }
+      } else {
+        if (entityId.includes('bedroom') || friendlyName.includes('bedroom')) { inferredArea = 'Bedroom'; isAssignedToArea = true; }
+        else if (entityId.includes('sophie') || friendlyName.includes('sophie')) { inferredArea = "Sophie's Room"; isAssignedToArea = true; }
+        else if (entityId.includes('living') || friendlyName.includes('living')) { inferredArea = 'Living Room'; isAssignedToArea = true; }
+        else if (entityId.includes('kitchen') || friendlyName.includes('kitchen')) { inferredArea = 'Kitchen'; isAssignedToArea = true; }
+        else if (entityId.includes('hallway') || friendlyName.includes('hallway')) { inferredArea = 'Hallway'; isAssignedToArea = true; }
+        else if (entityId.includes('landing') || friendlyName.includes('landing')) { inferredArea = 'Landing'; isAssignedToArea = true; }
+        else if (entityId.includes('dining') || friendlyName.includes('dining')) { inferredArea = 'Dining Room'; isAssignedToArea = true; }
+        else if (entityId.includes('bathroom') || friendlyName.includes('bathroom')) { inferredArea = 'Bathroom'; isAssignedToArea = true; }
+        else if (entityId.includes('storage') || friendlyName.includes('storage')) { inferredArea = 'Storage Cupboard'; isAssignedToArea = true; }
+        else if (entityId.includes('homelab') || friendlyName.includes('homelab')) { inferredArea = 'Home Lab'; isAssignedToArea = true; }
+        else if (entityId.includes('front_door') || friendlyName.includes('front door')) { inferredArea = 'Front Door'; isAssignedToArea = true; }
+        else if (entityId.includes('garden') || friendlyName.includes('outside')) { inferredArea = 'Outdoor / Garden'; isAssignedToArea = true; }
+      }
+    }
 
-    if (domain === 'light' && (id.includes('camera') || id.includes('ir_light') || id.includes('spotlight_camera') || name.includes('camera') || name.includes('ir light'))) {
-      return {
-        inferredCategory: 'Camera Light / Infrared',
-        entity_id: entity.entity_id,
-        name: entity.attributes.friendly_name || entity.entity_id,
-        state: entity.state,
-        areaName: inferredArea,
-        originalDomain: domain,
-        batteryLevel: battery
-      };
+    if (domain === 'light') {
+      const isCameraIR = entityId.includes('camera') || 
+                         entityId.includes('nightvision') || 
+                         entityId.includes('ir_led') || 
+                         friendlyName.includes('camera') || 
+                         friendlyName.includes('night vision');
+      
+      if (isCameraIR) {
+        return {
+          inferredCategory: 'Camera Light / Infrared',
+          entity_id: entity.entity_id,
+          name: entity.attributes.friendly_name || entity.entity_id,
+          state: entity.state,
+          areaName: inferredArea,
+          isAssignedToArea,
+          originalDomain: domain,
+          notes: 'Differentiated from room lighting by local inference'
+        };
+      }
     }
 
     if (domain === 'light') {
@@ -126,6 +300,7 @@ export class LocalPreProcessor {
         name: entity.attributes.friendly_name || entity.entity_id,
         state: entity.state,
         areaName: inferredArea,
+        isAssignedToArea,
         originalDomain: domain,
         batteryLevel: battery,
         suggestedAction: `light.turn_${entity.state === 'on' ? 'off' : 'on'}: ${entity.entity_id}`
@@ -139,6 +314,7 @@ export class LocalPreProcessor {
         name: entity.attributes.friendly_name || entity.entity_id,
         state: entity.state,
         areaName: inferredArea,
+        isAssignedToArea,
         originalDomain: domain,
         batteryLevel: battery
       };
@@ -151,6 +327,7 @@ export class LocalPreProcessor {
         name: entity.attributes.friendly_name || entity.entity_id,
         state: entity.state,
         areaName: inferredArea,
+        isAssignedToArea,
         originalDomain: domain
       };
     }
@@ -162,17 +339,23 @@ export class LocalPreProcessor {
         name: entity.attributes.friendly_name || entity.entity_id,
         state: entity.state,
         areaName: inferredArea,
+        isAssignedToArea,
         originalDomain: domain
       };
     }
 
     if (domain === 'automation') {
+      const lastTriggered = entity.attributes.last_triggered ? new Date(entity.attributes.last_triggered).toLocaleString() : 'Never';
       return {
         inferredCategory: 'Automation / Rule',
         entity_id: entity.entity_id,
         name: entity.attributes.friendly_name || entity.entity_id,
         state: entity.state,
-        originalDomain: domain
+        areaName: inferredArea,
+        isAssignedToArea,
+        originalDomain: domain,
+        notes: `Status: ${isAssignedToArea ? `Assigned to Area [${inferredArea}]` : 'UNGROUPED (NO AREA)'} | Last Triggered: ${lastTriggered}`,
+        rawAttributes: entity.attributes
       };
     }
 
@@ -193,6 +376,7 @@ export class LocalPreProcessor {
         name: entity.attributes.friendly_name || entity.entity_id,
         state: entity.state,
         areaName: inferredArea,
+        isAssignedToArea,
         originalDomain: domain,
         batteryLevel: battery
       };
@@ -207,54 +391,161 @@ export class LocalPreProcessor {
     };
   }
 
-  /**
-   * Complete Heavy Lifting Execution Pipeline
-   */
+  // ─────────────────────────────────────────────────────────────────────────
+  // INTENT-AWARE CONTEXT BUILDER
+  // Produces a targeted context block matched to the detected intent so the
+  // AI model only reads what it needs and never has to guess.
+  // ─────────────────────────────────────────────────────────────────────────
+
   public static async getContextForPrompt(userPrompt: string): Promise<string> {
+    const twin = await this.syncDigitalTwin();
     const index = await this.getIndex();
     const categorized = index.allEntities.map(e => this.inferDeviceType(e, index));
 
     const physicalLights = categorized.filter(c => c.inferredCategory === 'Physical Light');
-    const cameraLights = categorized.filter(c => c.inferredCategory === 'Camera Light / Infrared');
-    const switches = categorized.filter(c => c.inferredCategory === 'Switch / Plug');
-    const climate = categorized.filter(c => c.inferredCategory === 'Climate / HVAC');
-    const security = categorized.filter(c => c.inferredCategory === 'Security / Lock');
-    const automations = categorized.filter(c => c.inferredCategory === 'Automation / Rule');
-    const zones = categorized.filter(c => c.inferredCategory === 'Zone');
+    const cameraLights   = categorized.filter(c => c.inferredCategory === 'Camera Light / Infrared');
+    const switches       = categorized.filter(c => c.inferredCategory === 'Switch / Plug');
+    const climate        = categorized.filter(c => c.inferredCategory === 'Climate / HVAC');
+    const sensors        = categorized.filter(c => c.inferredCategory === 'Sensor');
+    const automations    = categorized.filter(c => c.inferredCategory === 'Automation / Rule');
 
-    return `
+    // Classify intent from user's message
+    const intentResult = IntentClassifier.classify(userPrompt, twin);
+    const { intent, targetAutomationIds, targetEntityIds } = intentResult;
+
+    // Build full automation detail snippet for a given rawId
+    const buildAutoSnippet = (rawId: string) => {
+      const cfg = twin.automationConfigs[rawId];
+      if (!cfg) return null;
+      return `--- [${rawId}] alias: "${cfg.alias || rawId}" ---
+  State: ${(twin.states.find(s => s.entity_id === `automation.${rawId}`)?.state || 'unknown').toUpperCase()}
+  Triggers:
+${JSON.stringify(cfg.trigger || [], null, 2)}
+  Conditions:
+${JSON.stringify(cfg.condition || [], null, 2)}
+  Actions:
+${JSON.stringify(cfg.action || [], null, 2)}`;
+    };
+
+    // Entity index line builder
+    const entityLine = (e: InferredDevice) =>
+      `  • [${e.areaName || 'Global'}] "${e.name}" (${e.entity_id}) -> ${e.state.toUpperCase()}`;
+
+    const header = `
 ================================================================================
-PRE-PROCESSED HOME ASSISTANT LOCAL TELEMETRY & INDEX
-================================================================================
-
-1. AREA & ROOM BREAKDOWN:
-   • Living Room: ${physicalLights.filter(l => l.areaName === 'Living Room').length} Lights, ${climate.filter(c => c.areaName === 'Living Room').length} Climate controls
-   • Kitchen: ${physicalLights.filter(l => l.areaName === 'Kitchen').length} Lights, ${switches.filter(s => s.areaName === 'Kitchen').length} Switches
-   • Bedroom: ${physicalLights.filter(l => l.areaName === 'Bedroom').length} Lights
-
-2. SYSTEM HEALTH & DIAGNOSTICS:
-   • Offline/Unavailable Devices: ${index.healthStatus.offlineCount}
-   • Low Battery Warnings (<20%): ${index.healthStatus.batteryLowCount}
-   • Installed HACS Custom Frontend Cards: ${index.hacsComponents.join(', ')}
-
-3. PHYSICAL ROOM LIGHTS (${physicalLights.length} found):
-${physicalLights.map(l => `  • [${l.areaName}] "${l.name}" (${l.entity_id}) -> ${l.state.toUpperCase()}`).join('\n')}
-
-4. CAMERA LIGHTS & INFRARED LEDs (${cameraLights.length} found):
-${cameraLights.map(c => `  • "${c.name}" (${c.entity_id}) -> ${c.state.toUpperCase()}`).join('\n')}
-
-5. SWITCHES & SMART PLUGS (${switches.length} found):
-${switches.map(s => `  • [${s.areaName}] "${s.name}" (${s.entity_id}) -> ${s.state.toUpperCase()}`).join('\n')}
-
-6. CLIMATE & THERMOSTATS (${climate.length} found):
-${climate.map(c => `  • [${c.areaName}] "${c.name}" (${c.entity_id}) -> ${c.state.toUpperCase()}`).join('\n')}
-
-7. AUTOMATIONS (${automations.length} found):
-${automations.map(a => `  • "${a.name}" (${a.entity_id}) -> ${a.state.toUpperCase()}`).join('\n')}
-
-8. ZONES & PRESENCE (${zones.length} found):
-${zones.map(z => `  • "${z.name}" (${z.entity_id}) -> ${z.state}`).join('\n')}
+HOME ASSISTANT DIGITAL TWIN — SOURCE OF TRUTH (Updated: ${twin.lastUpdated})
+Detected Intent: ${intent} | ${intentResult.reasoning}
 ================================================================================
 `;
+
+    const healthFooter = `
+SYSTEM HEALTH:
+   • Total Entities: ${twin.entityCount}
+   • Offline/Unavailable: ${index.healthStatus.offlineCount}
+   • Low Battery (<20%): ${index.healthStatus.batteryLowCount}
+================================================================================`;
+
+    // ── CREATE: Full device/entity catalogue so AI knows what's available ──
+    if (intent === 'CREATE') {
+      return `${header}
+INTENT: CREATE — You are building something NEW from scratch.
+Use the entity catalogue below as your source of truth for all entity IDs, areas, and device types.
+Do NOT reference any entity not listed here. If unsure about a device, ask the user first.
+
+AVAILABLE LIGHTS (${physicalLights.length}):
+${physicalLights.map(entityLine).join('\n')}
+
+AVAILABLE SWITCHES & SMART PLUGS (${switches.length}):
+${switches.map(entityLine).join('\n')}
+
+AVAILABLE CLIMATE / HVAC (${climate.length}):
+${climate.map(entityLine).join('\n')}
+
+AVAILABLE SENSORS (${sensors.length}):
+${sensors.map(entityLine).join('\n')}
+
+AVAILABLE ZONES:
+${categorized.filter(c => c.inferredCategory === 'Zone').map(entityLine).join('\n')}
+
+ALL EXISTING AUTOMATIONS (do NOT duplicate these — use them as reference only):
+${automations.map(a => `  • "${a.name}" (${a.entity_id})`).join('\n')}
+${healthFooter}`;
+    }
+
+    // ── REFACTOR: Full automation configs so AI can clean/rename without guessing ──
+    if (intent === 'REFACTOR') {
+      const allAutoDetails = Object.keys(twin.automationConfigs).map(buildAutoSnippet).filter(Boolean);
+
+      // Build floor → area tree for context
+      const floors = twin.floors || [];
+      const areas = twin.areas || [];
+      const floorMap = new Map((floors as any[]).map((f: any) => [f.floor_id, f.name]));
+      const floorTree = floors.length > 0
+        ? floors.map((f: any) => {
+            const floorAreas = areas.filter((a: any) => a.floor_id === f.floor_id);
+            return `  Floor: "${f.name}" (floor_id: ${f.floor_id}, level: ${f.level ?? 'unset'})
+${floorAreas.map((a: any) => `    └─ Area: "${a.name}" (area_id: ${a.area_id})`).join('\n') || '    └─ (no areas assigned yet)'}`;
+          }).join('\n')
+        : '  (no floors configured yet)';
+      const unassignedAreas = areas.filter((a: any) => !a.floor_id);
+
+      return `${header}
+INTENT: REFACTOR/CLEAN — You are reorganising or renaming existing automations.
+The full live config of every automation is provided below from the Source of Truth.
+NEVER invent or change triggers/actions/conditions — preserve them exactly. Only rename aliases, assign areas, or tidy structure.
+
+ALL LIVE AUTOMATION CONFIGS (${allAutoDetails.length} total):
+${allAutoDetails.join('\n\n')}
+
+FLOOR & AREA STRUCTURE (from HA Registry — use these exact IDs):
+${floorTree}
+${
+  unassignedAreas.length > 0
+    ? `\nAREAS NOT YET ASSIGNED TO A FLOOR (${unassignedAreas.length}):\n${unassignedAreas.map((a: any) => `  • "${a.name}" (area_id: ${a.area_id})`).join('\n')}`
+    : ''
+}
+${healthFooter}`;
+    }
+
+    // ── EDIT: Targeted automation + relevant entity context ──
+    // (intent === 'EDIT' or fallback)
+    const matchedAutoSnippets = targetAutomationIds.length > 0
+      ? targetAutomationIds.map(buildAutoSnippet).filter(Boolean)
+      : [];
+
+    const matchedEntityLines = targetEntityIds.length > 0
+      ? targetEntityIds.map(eid => {
+          const entity = categorized.find(c => c.entity_id === eid);
+          return entity ? entityLine(entity) : `  • ${eid} (referenced in prompt)`;
+        })
+      : [];
+
+    // If no automations matched, list all so AI can find what it needs
+    const autoSection = matchedAutoSnippets.length > 0
+      ? `REFERENCED AUTOMATION(S) — Full Live Config from Source of Truth:
+${matchedAutoSnippets.join('\n\n')}
+
+⚠️ CRITICAL: If the automation you need is NOT listed above, it was not found in the Digital Twin.
+   Do NOT guess its triggers or actions — ask the user to share its YAML or entity ID instead.`
+      : `⚠️ No specific automation was matched from your prompt. All automations listed for reference:
+${automations.map(a => `  • "${a.name}" (${a.entity_id})`).join('\n')}
+
+If you are modifying a specific automation, confirm its name and the full config will be provided.`;
+
+    return `${header}
+INTENT: EDIT — You are modifying an existing automation or entity.
+Read the exact live config below from the Source of Truth. Do NOT change anything not explicitly requested.
+Do NOT invent new triggers, conditions, or actions — only make the specific changes asked for.
+
+${autoSection}
+
+RELEVANT ENTITIES FROM PROMPT (${matchedEntityLines.length}):
+${matchedEntityLines.length > 0 ? matchedEntityLines.join('\n') : '  (no specific entities matched — use entity catalogue if needed)'}
+
+FULL ENTITY CATALOGUE (for cross-referencing new entities mentioned):
+Lights: ${physicalLights.map(l => `${l.entity_id}(${l.areaName})`).join(', ')}
+Switches: ${switches.map(s => `${s.entity_id}(${s.areaName})`).join(', ')}
+Sensors: ${sensors.map(s => `${s.entity_id}`).join(', ')}
+${healthFooter}`;
   }
 }

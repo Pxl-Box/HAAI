@@ -11,7 +11,7 @@ import { HAConfig } from './types/homeassistant';
 import { StorageService } from './services/storage';
 import { haService } from './services/haClient';
 import { AIManager, DEFAULT_PROVIDERS } from './services/ai/aiManager';
-import { executeHATool } from './services/haTools';
+import { LocalPreProcessor } from './services/localPreProcessor';
 
 export const App: React.FC = () => {
   const [isOnboarded, setIsOnboarded] = useState(false);
@@ -44,6 +44,8 @@ export const App: React.FC = () => {
       haService.setConfig(savedHA);
       setHaConnected(true);
       setIsOnboarded(true);
+      // Synchronize local Digital Twin Source of Truth on launch!
+      LocalPreProcessor.syncDigitalTwin().catch(() => {});
     }
 
     const currentProv = savedProviders[savedActiveProviderId] || DEFAULT_PROVIDERS[savedActiveProviderId as keyof typeof DEFAULT_PROVIDERS] || DEFAULT_PROVIDERS.ollama;
@@ -115,7 +117,7 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, imageUrls?: string[]) => {
     if (!activeThreadId) return;
 
     const currentThread = threads.find(t => t.id === activeThreadId);
@@ -125,7 +127,8 @@ export const App: React.FC = () => {
       id: `msg_${Date.now()}`,
       role: 'user',
       content,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      imageUrls
     };
 
     const updatedMessages = [...currentThread.messages, userMsg];
@@ -137,13 +140,10 @@ export const App: React.FC = () => {
     setIsSending(true);
 
     try {
-      const aiResponse = await AIManager.sendMessage(activeProvider, updatedMessages, content);
+      const aiResponse = await AIManager.sendMessage(activeProvider, updatedMessages, content, imageUrls);
 
-      // Execute tool calls and capture real tool results
+      // DO NOT auto-execute tool calls here. HAAI waits for the user to click "Commit to HA" in ChatWorkspace!
       let toolResults: AIToolResult[] | undefined = undefined;
-      if (aiResponse.toolCalls && aiResponse.toolCalls.length > 0) {
-        toolResults = await Promise.all(aiResponse.toolCalls.map(tc => executeHATool(tc)));
-      }
 
       const assistantMsg: ChatMessage = {
         id: `msg_${Date.now() + 1}`,
@@ -178,7 +178,7 @@ export const App: React.FC = () => {
       {!isOnboarded ? (
         <Onboarding onComplete={handleOnboardingComplete} />
       ) : (
-        <div style={{ display: 'flex', flex: 1, height: 'calc(100vh - 38px)', overflow: 'hidden' }}>
+        <div className="app-layout">
           <Sidebar
             collapsed={sidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}

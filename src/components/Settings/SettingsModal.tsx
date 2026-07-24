@@ -215,9 +215,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               )}
 
-              <button className="btn btn-secondary" onClick={handleTestHA} disabled={haTesting}>
-                {haTesting ? 'Testing...' : 'Test Connection'}
-              </button>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <button className="btn btn-secondary" onClick={handleTestHA} disabled={haTesting}>
+                  {haTesting ? 'Testing...' : 'Test Connection'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ backgroundColor: '#1e293b', borderColor: '#3b82f6', color: '#60a5fa' }}
+                  onClick={() => {
+                    setHaUrl('http://localhost:8123');
+                    setHaToken('test-token');
+                  }}
+                >
+                  🧪 Load Test Sandbox Credentials
+                </button>
+              </div>
             </div>
           ) : (
             <div>

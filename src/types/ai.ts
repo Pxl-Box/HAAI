@@ -25,6 +25,12 @@ export interface AIToolCall {
   id: string;
   name: string;
   arguments: Record<string, any>;
+  /** Populated after post-generation validation against the Digital Twin */
+  _validation?: {
+    isClean: boolean;
+    unknownEntities: Array<{ entityId: string; usedIn: string; suggestion?: string }>;
+    checkedEntityCount: number;
+  };
 }
 
 export interface AIToolResult {
@@ -41,6 +47,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   timestamp: string;
+  imageUrls?: string[];
   toolCalls?: AIToolCall[];
   toolResults?: AIToolResult[];
   modelUsed?: string;

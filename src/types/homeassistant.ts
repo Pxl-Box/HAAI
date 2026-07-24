@@ -16,17 +16,30 @@ export interface HAState {
   };
 }
 
+export interface HAFloor {
+  floor_id: string;
+  name: string;
+  level?: number;
+  icon?: string;
+  aliases?: string[];
+}
+
 export interface HADevice {
   id: string;
   name: string;
+  name_by_user?: string;
   model?: string;
   manufacturer?: string;
   area_id?: string;
+  configuration_url?: string;
 }
 
 export interface HAArea {
   area_id: string;
   name: string;
+  floor_id?: string;
+  icon?: string;
+  aliases?: string[];
 }
 
 export interface HAAutomation {

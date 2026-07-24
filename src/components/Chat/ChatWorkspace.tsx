@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Wrench, CheckCircle, Eye, Monitor, Cpu, Copy, Check, Download, CheckSquare, ChevronDown, ChevronRight, Zap } from 'lucide-react';
+import { Send, Bot, User, Wrench, CheckCircle, Eye, Monitor, Cpu, Copy, Check, Download, CheckSquare, ChevronDown, ChevronRight, Zap, Image as ImageIcon, X } from 'lucide-react';
 import { ChatMessage, AIToolCall, AIToolResult } from '../../types/ai';
+import { executeHATool } from '../../services/haTools';
+import { LocalPreProcessor } from '../../services/localPreProcessor';
 
 interface ChatWorkspaceProps {
   messages: ChatMessage[];
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string, imageUrls?: string[]) => void;
   activeModel: string;
   providerName: string;
   isSending: boolean;
@@ -20,93 +22,125 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   isLocalProvider
 }) => {
   const [input, setInput] = useState('');
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
-  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [commitStatus, setCommitStatus] = useState<Record<string, string>>({});
   const [committedTools, setCommittedTools] = useState<Record<string, boolean>>({});
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [pasteFeedback, setPasteFeedback] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSending]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isSending) return;
-    onSendMessage(input);
-    setInput('');
+  // Ctrl+V paste image handler
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageItems = items.filter(item => item.type.startsWith('image/'));
+    if (imageItems.length === 0) return;
+
+    imageItems.forEach(item => {
+      const file = item.getAsFile();
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setSelectedImages(prev => [...prev, event.target!.result as string]);
+          setPasteFeedback(true);
+          setTimeout(() => setPasteFeedback(false), 1500);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
-  const toggleExpand = (id: string) => {
-    setExpandedResults(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const handleCopy = (id: string, text: string) => {
+  const handleCopy = (msgId: string, text: string) => {
     navigator.clipboard.writeText(text);
-    setCopiedMsgId(id);
+    setCopiedMsgId(msgId);
     setTimeout(() => setCopiedMsgId(null), 2000);
   };
 
-  const handleDownloadFile = (content: string, filename: string, type: string = 'text/plain') => {
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const files = Array.from(e.target.files);
+
+    files.forEach(file => {
+      if (!file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setSelectedImages(prev => [...prev, event.target!.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
-  const handleCommitAutomation = (tc: AIToolCall) => {
+  const removeImage = (index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleCommitAutomationDirect = async (tc: AIToolCall) => {
     setCommittedTools(prev => ({ ...prev, [tc.id]: true }));
-    const alias = tc.arguments?.alias || 'this automation';
-    onSendMessage(`Please commit and apply "${alias}" live in Home Assistant and clean up/remove any conflicting old automations.`);
+    setCommitStatus(prev => ({ ...prev, [tc.id]: 'Applying live update & tidying up...' }));
+
+    try {
+      const res = await executeHATool(tc);
+      if (res.success) {
+        setCommitStatus(prev => ({ ...prev, [tc.id]: '✓ Applied Live to Home Assistant!' }));
+        await LocalPreProcessor.syncDigitalTwin().catch(() => {});
+        const alias = tc.arguments?.alias || 'Automation';
+        onSendMessage(`Successfully committed "${alias}" to Home Assistant and updated local Digital Twin!`);
+      } else {
+        setCommitStatus(prev => ({ ...prev, [tc.id]: `Error: ${res.error || 'Failed to update'}` }));
+      }
+    } catch (err: any) {
+      setCommitStatus(prev => ({ ...prev, [tc.id]: `Error: ${err.message || 'API Call failed'}` }));
+    }
+  };
+
+  const cleanMessageText = (content: string, hasToolCards: boolean) => {
+    if (!hasToolCards) return content;
+    return content.replace(/```(?:yaml|yml)?\s*[\s\S]*?```/gi, '').trim();
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if ((!input.trim() && selectedImages.length === 0) || isSending) return;
+    onSendMessage(input.trim() || 'Please analyze this Home Assistant screenshot and fix any issues.', selectedImages.length > 0 ? selectedImages : undefined);
+    setInput('');
+    setSelectedImages([]);
   };
 
   return (
-    <main style={{
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      backgroundColor: '#0b0f19',
-      position: 'relative'
-    }}>
-      {/* Top Thread Info Bar */}
-      <header style={{
-        height: '48px',
+    <main className="chat-workspace">
+      {/* Messages Header bar */}
+      <div style={{
+        padding: '16px 24px',
         borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-        padding: '0 20px',
+        backgroundColor: '#111827',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: '#111827'
+        justifyContent: 'space-between'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {isLocalProvider ? <Monitor size={18} color="#10b981" /> : <Bot size={18} color="#3b82f6" />}
-          <span style={{ fontSize: '14px', fontWeight: 600, color: '#f3f4f6' }}>Smart Home Agent</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {isLocalProvider ? <Monitor size={20} color="#34d399" /> : <Cpu size={20} color="#60a5fa" />}
+          <div>
+            <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#f9fafb', margin: 0 }}>
+              {isLocalProvider ? 'Local Offline Mode' : 'Cloud AI Assistant'}
+            </h2>
+            <span style={{ fontSize: '12px', color: '#9ca3af' }}>
+              Active Model: <strong style={{ color: isLocalProvider ? '#34d399' : '#60a5fa' }}>{activeModel}</strong> ({providerName})
+            </span>
+          </div>
         </div>
-        <div style={{ fontSize: '12px', color: '#9ca3af', display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <span style={{
-            padding: '2px 8px',
-            borderRadius: '12px',
-            background: isLocalProvider ? 'rgba(16, 185, 129, 0.15)' : 'rgba(59, 130, 246, 0.15)',
-            color: isLocalProvider ? '#34d399' : '#60a5fa',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px'
-          }}>
-            {isLocalProvider ? <Monitor size={10} /> : <Cpu size={10} />}
-            {isLocalProvider ? '[LOCAL] ' : '[CLOUD] '}{providerName}
-          </span>
-          <span>•</span>
-          <span>{activeModel}</span>
-        </div>
-      </header>
+      </div>
 
-      {/* Messages Thread Container */}
-      <div style={{
+      {/* Messages List Area */}
+      <div className="messages-container" style={{
         flex: 1,
         overflowY: 'auto',
         padding: '24px',
@@ -116,44 +150,51 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       }}>
         {messages.length === 0 ? (
           <div style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#6b7280',
-            textAlign: 'center'
+            textAlign: 'center',
+            margin: 'auto',
+            maxWidth: '480px',
+            padding: '40px 20px',
+            backgroundColor: '#111827',
+            borderRadius: '16px',
+            border: '1px solid rgba(255, 255, 255, 0.06)'
           }}>
-            {isLocalProvider ? <Monitor size={48} color="#10b981" style={{ marginBottom: '16px', opacity: 0.8 }} /> : <Bot size={48} color="#3b82f6" style={{ marginBottom: '16px', opacity: 0.8 }} />}
-            <h3 style={{ fontSize: '18px', color: '#f3f4f6', marginBottom: '8px' }}>How can HAAI help your Home Assistant today?</h3>
-            <p style={{ fontSize: '14px', maxWidth: '420px', lineHeight: 1.5 }}>
-              Ask to build new automations, check entity statuses, rename devices safely, generate dashboard cards, or export JSON/YAML configs.
+            <Bot size={44} color="#3b82f6" style={{ marginBottom: '16px' }} />
+            <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#f3f4f6', marginBottom: '8px' }}>
+              Welcome to HAAI Smart Home Assistant
+            </h3>
+            <p style={{ fontSize: '14px', color: '#9ca3af', lineHeight: 1.5 }}>
+              Ask AI to inspect entities, build multi-room automations, analyze screenshots, organize areas, or tune your dashboards.
             </p>
           </div>
         ) : (
-          messages.map(msg => {
+          messages.map((msg) => {
+            const hasToolCards = Boolean(msg.toolCalls && msg.toolCalls.length > 0);
+            const displayText = cleanMessageText(msg.content, hasToolCards);
+
             return (
-              <div key={msg.id} className="animate-fade-in" style={{
-                display: 'flex',
-                gap: '14px',
-                maxWidth: '850px',
-                alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                flexDirection: msg.role === 'user' ? 'row-reverse' : 'row'
-              }}>
-                {/* Avatar */}
+              <div
+                key={msg.id}
+                style={{
+                  display: 'flex',
+                  gap: '12px',
+                  alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  maxWidth: '85%'
+                }}
+              >
+                {/* Avatar Icon */}
                 <div style={{
-                  width: '36px',
-                  height: '36px',
+                  width: '34px',
+                  height: '34px',
                   borderRadius: '10px',
-                  backgroundColor: msg.role === 'user' ? '#3b82f6' : (isLocalProvider ? '#064e3b' : '#1f293d'),
-                  border: `1px solid ${msg.role === 'user' ? '#3b82f6' : (isLocalProvider ? '#10b981' : 'rgba(255, 255, 255, 0.1)')}`,
+                  backgroundColor: msg.role === 'user' ? '#2563eb' : (isLocalProvider ? '#064e3b' : '#1e3a8a'),
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  flexShrink: 0
+                  flexShrink: 0,
+                  marginTop: '4px'
                 }}>
                   {msg.role === 'user' ? (
-                    <User size={18} color="#fff" />
+                    <User size={18} color="#ffffff" />
                   ) : isLocalProvider ? (
                     <Monitor size={18} color="#34d399" />
                   ) : (
@@ -161,7 +202,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                   )}
                 </div>
 
-                {/* Message Content Bubble Container */}
+                {/* Message Content Container */}
                 <div style={{
                   display: 'flex',
                   flexDirection: 'column',
@@ -169,7 +210,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                   width: '100%',
                   position: 'relative'
                 }}>
-                  {/* Header Tag above AI Response indicating Local or Cloud AI */}
                   {msg.role === 'assistant' && (
                     <div style={{
                       fontSize: '11px',
@@ -183,177 +223,232 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                         {isLocalProvider ? <Monitor size={12} /> : <Cpu size={12} />}
                         {isLocalProvider ? 'LOCAL MODEL' : 'CLOUD AI'} ({msg.modelUsed || activeModel})
                       </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        {/* Copy Button */}
-                        <button
-                          onClick={() => handleCopy(msg.id, msg.content)}
-                          style={{
-                            border: 'none',
-                            background: 'transparent',
-                            color: copiedMsgId === msg.id ? '#10b981' : '#9ca3af',
-                            fontSize: '11px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '2px 6px',
-                            borderRadius: '4px'
-                          }}
-                          title="Copy Response"
-                        >
-                          {copiedMsgId === msg.id ? <Check size={12} /> : <Copy size={12} />}
-                          {copiedMsgId === msg.id ? 'Copied!' : 'Copy'}
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => handleCopy(msg.id, msg.content)}
+                        style={{
+                          border: 'none',
+                          background: 'transparent',
+                          color: copiedMsgId === msg.id ? '#10b981' : '#9ca3af',
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {copiedMsgId === msg.id ? <Check size={12} /> : <Copy size={12} />}
+                        {copiedMsgId === msg.id ? 'Copied!' : 'Copy'}
+                      </button>
                     </div>
                   )}
 
-                  <div style={{
-                    padding: '14px 18px',
-                    borderRadius: '14px',
-                    backgroundColor: msg.role === 'user' ? '#2563eb' : '#1f293d',
-                    border: `1px solid ${msg.role === 'user' ? '#3b82f6' : 'rgba(255, 255, 255, 0.08)'}`,
-                    color: '#f3f4f6',
-                    fontSize: '14px',
-                    lineHeight: 1.6,
-                    whiteSpace: 'pre-wrap'
-                  }}>
-                    {msg.content}
-                  </div>
+                  {/* Render User Uploaded Screenshots */}
+                  {msg.imageUrls && msg.imageUrls.length > 0 && (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                      {msg.imageUrls.map((img, i) => (
+                        <img
+                          key={i}
+                          src={img}
+                          alt="Uploaded Screenshot"
+                          style={{
+                            maxWidth: '280px',
+                            maxHeight: '200px',
+                            borderRadius: '10px',
+                            border: '1px solid rgba(255, 255, 255, 0.15)',
+                            objectFit: 'cover'
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
 
-                  {/* Tool Calls Render - COLLAPSIBLE DROPDOWN BY DEFAULT WITH COMMIT TO HA & ICON-ONLY DOWNLOAD BUTTON */}
-                  {msg.toolCalls && msg.toolCalls.map((tc, idx) => {
-                    const result = msg.toolResults ? msg.toolResults[idx] : null;
-                    const isExpanded = !!expandedResults[tc.id];
-                    const isCommitted = !!committedTools[tc.id];
+                  {/* Text Bubble */}
+                  {displayText && (
+                    <div style={{
+                      padding: '14px 18px',
+                      borderRadius: '14px',
+                      backgroundColor: msg.role === 'user' ? '#2563eb' : '#1f293d',
+                      border: `1px solid ${msg.role === 'user' ? '#3b82f6' : 'rgba(255, 255, 255, 0.08)'}`,
+                      color: '#f3f4f6',
+                      fontSize: '14px',
+                      lineHeight: 1.6,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word'
+                    }}>
+                      {displayText}
+                    </div>
+                  )}
+
+                  {/* Render 1-Click Action Tool Cards */}
+                  {msg.toolCalls && msg.toolCalls.map((tc) => {
+                    const statusText = commitStatus[tc.id];
+                    const isCommitted = Boolean(committedTools[tc.id]);
 
                     return (
-                      <div key={tc.id} className="glass-panel" style={{
-                        borderRadius: '10px',
-                        backgroundColor: 'rgba(17, 24, 39, 0.9)',
-                        border: '1px solid rgba(59, 130, 246, 0.3)',
-                        overflow: 'hidden'
-                      }}>
-                        {/* Collapsible Dropdown Header */}
-                        <div
-                          onClick={() => toggleExpand(tc.id)}
-                          style={{
-                            padding: '10px 14px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            cursor: 'pointer',
-                            backgroundColor: isExpanded ? 'rgba(59, 130, 246, 0.1)' : 'transparent'
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Wrench size={14} color="#3b82f6" />
-                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#f3f4f6' }}>
-                              Action: {tc.name} ({tc.arguments?.alias || tc.arguments?.domain || 'Details'})
+                      <div
+                        key={tc.id}
+                        style={{
+                          marginTop: '4px',
+                          backgroundColor: '#0f172a',
+                          border: '1px solid #1e293b',
+                          borderRadius: '12px',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        <div style={{
+                          padding: '12px 16px',
+                          backgroundColor: '#1e293b',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '12px'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1, minWidth: 0 }}>
+                            <Wrench size={16} color="#38bdf8" style={{ flexShrink: 0 }} />
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              Action: {tc.name} ({tc.arguments?.alias || tc.arguments?.automationId || 'Home Assistant'})
                             </span>
+                            {/* Validation badge */}
+                            {tc._validation && !tc._validation.isClean && (
+                              <span
+                                title={`${tc._validation.unknownEntities.length} unknown entity ID(s) detected — expand to see details`}
+                                style={{
+                                  flexShrink: 0,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 8px',
+                                  borderRadius: '9999px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  backgroundColor: 'rgba(251, 191, 36, 0.15)',
+                                  border: '1px solid rgba(251, 191, 36, 0.4)',
+                                  color: '#fbbf24',
+                                  cursor: 'default'
+                                }}
+                              >
+                                ⚠ {tc._validation.unknownEntities.length} unknown {tc._validation.unknownEntities.length === 1 ? 'entity' : 'entities'}
+                              </span>
+                            )}
+                            {tc._validation?.isClean && tc._validation.checkedEntityCount > 0 && (
+                              <span
+                                title={`All ${tc._validation.checkedEntityCount} entity ID(s) verified against your Digital Twin`}
+                                style={{
+                                  flexShrink: 0,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 8px',
+                                  borderRadius: '9999px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  backgroundColor: 'rgba(52, 211, 153, 0.1)',
+                                  border: '1px solid rgba(52, 211, 153, 0.3)',
+                                  color: '#34d399',
+                                  cursor: 'default'
+                                }}
+                              >
+                                ✓ verified
+                              </span>
+                            )}
                           </div>
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {/* Commit to HA Button for Automations */}
-                            {tc.name === 'create_or_update_automation' && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleCommitAutomation(tc);
-                                }}
-                                disabled={isCommitted}
-                                className="btn btn-primary"
-                                style={{
-                                  padding: '4px 10px',
-                                  fontSize: '11px',
-                                  backgroundColor: isCommitted ? '#10b981' : '#3b82f6'
-                                }}
-                              >
-                                {isCommitted ? <CheckSquare size={12} /> : <Zap size={12} />}
-                                {isCommitted ? 'Committed' : 'Commit to HA'}
-                              </button>
-                            )}
-
-                            {/* Icon-Only Download Config Button - Placed RIGHT of Commit Button */}
-                            {tc.arguments && (tc.arguments.trigger || tc.arguments.alias || tc.arguments.config) && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const name = (tc.arguments.alias || 'ha_automation').toLowerCase().replace(/[^a-z0-9]/g, '_');
-                                  handleDownloadFile(JSON.stringify(tc.arguments, null, 2), `${name}.json`, 'application/json');
-                                }}
-                                className="btn btn-secondary"
-                                style={{
-                                  padding: '6px',
-                                  borderRadius: '6px',
-                                  borderColor: 'rgba(59, 130, 246, 0.4)',
-                                  color: '#60a5fa'
-                                }}
-                                title="Download Config File"
-                              >
-                                <Download size={14} />
-                              </button>
-                            )}
-
-                            {/* Icon-Only Arrow Toggle */}
+                            {/* 1-Click Commit Button */}
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleExpand(tc.id);
-                              }}
+                              onClick={() => handleCommitAutomationDirect(tc)}
+                              disabled={isCommitted}
                               style={{
-                                border: 'none',
-                                background: 'transparent',
-                                color: '#9ca3af',
                                 display: 'flex',
                                 alignItems: 'center',
+                                gap: '6px',
+                                padding: '6px 14px',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                borderRadius: '6px',
+                                border: 'none',
+                                cursor: isCommitted ? 'default' : 'pointer',
+                                backgroundColor: isCommitted ? '#065f46' : '#2563eb',
+                                color: '#ffffff'
+                              }}
+                            >
+                              {isCommitted ? <CheckCircle size={14} /> : <Zap size={14} />}
+                              {isCommitted ? '✓ Committed' : '⚡ Commit to HA'}
+                            </button>
+
+                            <button
+                              onClick={() => setExpandedResults(prev => ({ ...prev, [tc.id]: !prev[tc.id] }))}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#94a3b8',
                                 cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
                                 padding: '4px'
                               }}
-                              title={isExpanded ? 'Collapse Details' : 'Expand Details'}
                             >
-                              {isExpanded ? <ChevronDown size={18} color="#60a5fa" /> : <ChevronRight size={18} color="#9ca3af" />}
+                              {expandedResults[tc.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                             </button>
                           </div>
                         </div>
 
-                        {/* Collapsible Content Drawer */}
-                        {isExpanded && (
-                          <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                            <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>PARAMETERS:</div>
+                        {/* Validation warning panel */}
+                        {tc._validation && !tc._validation.isClean && (
+                          <div style={{
+                            padding: '10px 16px',
+                            backgroundColor: 'rgba(251, 191, 36, 0.07)',
+                            borderTop: '1px solid rgba(251, 191, 36, 0.2)',
+                            borderBottom: '1px solid rgba(251, 191, 36, 0.2)'
+                          }}>
+                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#fbbf24', marginBottom: '6px' }}>
+                              ⚠ Fact-Check: {tc._validation.unknownEntities.length} entity ID(s) not found in your Digital Twin
+                            </div>
+                            {tc._validation.unknownEntities.map((w, i) => (
+                              <div key={i} style={{ fontSize: '11px', color: '#f59e0b', marginBottom: '3px', fontFamily: 'var(--font-mono)' }}>
+                                <span style={{ color: '#fca5a5' }}>{w.entityId}</span>
+                                <span style={{ color: '#64748b' }}> used in {w.usedIn}</span>
+                                {w.suggestion && (
+                                  <span style={{ color: '#94a3b8' }}> — did you mean <span style={{ color: '#67e8f9' }}>{w.suggestion}</span>?</span>
+                                )}
+                              </div>
+                            ))}
+                            <div style={{ fontSize: '10px', color: '#64748b', marginTop: '6px' }}>
+                              Review before committing. You can still commit as-is — Home Assistant will flag missing entities on its end.
+                            </div>
+                          </div>
+                        )}
+
+
+                        {statusText && (
+                          <div style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#0f172a',
+                            fontSize: '12px',
+                            color: statusText.includes('✓') ? '#34d399' : '#f87171',
+                            fontWeight: 500
+                          }}>
+                            {statusText}
+                          </div>
+                        )}
+
+                        {expandedResults[tc.id] && (
+                          <div style={{ padding: '14px 16px', borderTop: '1px solid #1e293b' }}>
+                            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748b', marginBottom: '6px', fontWeight: 600 }}>
+                              Parameters / YAML Data
+                            </div>
                             <pre style={{
                               fontFamily: 'var(--font-mono)',
                               fontSize: '12px',
-                              color: '#9ca3af',
-                              backgroundColor: '#0b0f19',
-                              padding: '8px 12px',
-                              borderRadius: '6px',
+                              color: '#cbd5e1',
+                              backgroundColor: '#020617',
+                              padding: '10px 14px',
+                              borderRadius: '8px',
                               overflowX: 'auto',
-                              marginBottom: '10px'
+                              maxHeight: '300px'
                             }}>
                               {JSON.stringify(tc.arguments, null, 2)}
                             </pre>
-
-                            {result && (
-                              <div>
-                                <div style={{ fontSize: '11px', color: '#10b981', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  <CheckCircle size={12} /> HOME ASSISTANT LIVE OUTPUT:
-                                </div>
-                                <pre style={{
-                                  fontFamily: 'var(--font-mono)',
-                                  fontSize: '12px',
-                                  color: '#10b981',
-                                  backgroundColor: '#061a14',
-                                  border: '1px solid rgba(16, 185, 129, 0.2)',
-                                  padding: '8px 12px',
-                                  borderRadius: '6px',
-                                  overflowX: 'auto',
-                                  maxHeight: '220px'
-                                }}>
-                                  {result.diffPreview || JSON.stringify(result.result, null, 2)}
-                                </pre>
-                              </div>
-                            )}
                           </div>
                         )}
                       </div>
@@ -368,32 +463,109 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         {isSending && (
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', color: '#9ca3af', fontSize: '13px' }}>
             {isLocalProvider ? <Monitor size={18} color="#10b981" /> : <Bot size={18} color="#3b82f6" />}
-            <span>{isLocalProvider ? 'Local Model' : 'Cloud AI'} is querying Home Assistant...</span>
+            <span>{isLocalProvider ? 'Local Model' : 'Cloud AI'} is analyzing Home Assistant...</span>
           </div>
         )}
 
         <div ref={bottomRef} />
       </div>
 
-      {/* Bottom Message Input Bar */}
+      {/* Selected Image Thumbnails Preview Bar */}
+      {selectedImages.length > 0 && (
+        <div style={{
+          padding: '10px 20px 0 20px',
+          backgroundColor: '#111827',
+          display: 'flex',
+          gap: '10px',
+          overflowX: 'auto'
+        }}>
+          {selectedImages.map((img, i) => (
+            <div key={i} style={{ position: 'relative' }}>
+              <img
+                src={img}
+                alt="Selected preview"
+                style={{
+                  width: '60px',
+                  height: '60px',
+                  borderRadius: '8px',
+                  objectFit: 'cover',
+                  border: '1px solid #3b82f6'
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => removeImage(i)}
+                style={{
+                  position: 'absolute',
+                  top: '-6px',
+                  right: '-6px',
+                  backgroundColor: '#ef4444',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '18px',
+                  height: '18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer'
+                }}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Bottom Message Input Bar with Screenshot Upload Button */}
       <form onSubmit={handleSubmit} style={{
         padding: '16px 20px',
         backgroundColor: '#111827',
         borderTop: '1px solid rgba(255, 255, 255, 0.08)'
       }}>
+        <input
+          type="file"
+          accept="image/*"
+          multiple
+          ref={fileInputRef}
+          onChange={handleImageSelect}
+          style={{ display: 'none' }}
+        />
+
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isSending}
+            title="Upload screenshot of Home Assistant UI or Trace log"
+            style={{ padding: '12px 14px', backgroundColor: '#1e293b' }}
+          >
+            <ImageIcon size={18} color="#94a3b8" />
+          </button>
+
           <input
             className="input-field"
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="Ask AI to automate, inspect, rename entities, or design dashboards..."
+            onPaste={handlePaste}
+            placeholder={pasteFeedback ? '📋 Image pasted! Add a message or send directly...' : 'Ask AI to automate, fix a screenshot error, inspect, or build... (Ctrl+V to paste images)'}
             disabled={isSending}
-            style={{ padding: '12px 16px', fontSize: '14px' }}
+            style={{
+              padding: '12px 16px',
+              fontSize: '14px',
+              flex: 1,
+              borderColor: pasteFeedback ? '#3b82f6' : undefined,
+              boxShadow: pasteFeedback ? '0 0 0 2px rgba(59, 130, 246, 0.35)' : undefined,
+              transition: 'border-color 0.2s ease, box-shadow 0.2s ease'
+            }}
           />
+
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={!input.trim() || isSending}
+            disabled={(!input.trim() && selectedImages.length === 0) || isSending}
             style={{ padding: '12px 20px' }}
           >
             <Send size={16} />

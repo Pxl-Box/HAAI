@@ -29,13 +29,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside style={{
       width: collapsed ? '64px' : '260px',
+      minWidth: collapsed ? '64px' : '260px',
       backgroundColor: '#111827',
       borderRight: '1px solid rgba(255, 255, 255, 0.08)',
       display: 'flex',
       flexDirection: 'column',
-      transition: 'width 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+      transition: 'width 0.2s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
       height: '100%',
-      position: 'relative'
+      position: 'relative',
+      zIndex: 10,
+      flexShrink: 0
     }}>
       {/* Top Header */}
       <div style={{
@@ -43,7 +46,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         display: 'flex',
         alignItems: 'center',
         justifyContent: collapsed ? 'center' : 'space-between',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
+        borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+        height: '56px',
+        flexShrink: 0
       }}>
         {!collapsed && <span style={{ fontSize: '13px', fontWeight: 700, color: '#9ca3af', letterSpacing: '0.5px' }}>TOPIC CHATS</span>}
         <button
@@ -57,24 +62,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* New Chat Button */}
-      <div style={{ padding: '12px' }}>
+      <div style={{ padding: '12px', flexShrink: 0 }}>
         <button
           onClick={() => onNewThread()}
           className="btn btn-primary"
           style={{
             width: '100%',
             justifyContent: collapsed ? 'center' : 'flex-start',
-            padding: collapsed ? '10px' : '10px 14px'
+            padding: collapsed ? '10px' : '10px 14px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden'
           }}
         >
-          <Plus size={18} />
+          <Plus size={18} style={{ flexShrink: 0 }} />
           {!collapsed && <span>New Agent Chat</span>}
         </button>
       </div>
 
       {/* Recommended Topic Presets */}
       {!collapsed && (
-        <div style={{ padding: '0 12px 12px 12px' }}>
+        <div style={{ padding: '0 12px 12px 12px', flexShrink: 0 }}>
           <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '8px', paddingLeft: '4px' }}>
             QUICK AGENT PRESETS
           </div>
@@ -83,25 +90,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => onNewThread('Lighting & Ambience')}
               style={presetBtnStyle}
             >
-              <Lightbulb size={12} color="#f59e0b" /> Lighting
+              <Lightbulb size={12} color="#f59e0b" style={{ flexShrink: 0 }} /> Lighting
             </button>
             <button
               onClick={() => onNewThread('Security & Cameras')}
               style={presetBtnStyle}
             >
-              <Shield size={12} color="#ef4444" /> Security
+              <Shield size={12} color="#ef4444" style={{ flexShrink: 0 }} /> Security
             </button>
             <button
               onClick={() => onNewThread('Dashboard Layouts')}
               style={presetBtnStyle}
             >
-              <Layout size={12} color="#06b6d4" /> Dashboard
+              <Layout size={12} color="#06b6d4" style={{ flexShrink: 0 }} /> Dashboard
             </button>
             <button
               onClick={() => onNewThread('Clean & Rename')}
               style={presetBtnStyle}
             >
-              <Wrench size={12} color="#10b981" /> Refactor
+              <Wrench size={12} color="#10b981" style={{ flexShrink: 0 }} /> Refactor
             </button>
           </div>
         </div>
@@ -132,11 +139,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 border: `1px solid ${isActive ? 'rgba(59, 130, 246, 0.3)' : 'transparent'}`,
                 color: isActive ? '#f3f4f6' : '#9ca3af',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease'
+                transition: 'all 0.15s ease',
+                flexShrink: 0
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-                <MessageSquare size={16} color={isActive ? '#3b82f6' : '#6b7280'} />
+                <MessageSquare size={16} color={isActive ? '#3b82f6' : '#6b7280'} style={{ flexShrink: 0 }} />
                 {!collapsed && (
                   <span style={{
                     fontSize: '13px',
@@ -158,7 +166,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     color: '#6b7280',
                     cursor: 'pointer',
                     padding: '2px',
-                    display: 'flex'
+                    display: 'flex',
+                    flexShrink: 0
                   }}
                   title="Delete Chat"
                 >
@@ -176,18 +185,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
         borderTop: '1px solid rgba(255, 255, 255, 0.08)',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: collapsed ? 'center' : 'space-between'
+        justifyContent: collapsed ? 'center' : 'space-between',
+        flexShrink: 0
       }}>
         <button
           onClick={onOpenSettings}
           className="btn btn-secondary"
           style={{
             width: collapsed ? '40px' : '100%',
-            justifyContent: collapsed ? 'center' : 'flex-start'
+            justifyContent: collapsed ? 'center' : 'flex-start',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden'
           }}
           title="Open Settings"
         >
-          <Settings size={18} color="#9ca3af" />
+          <Settings size={18} color="#9ca3af" style={{ flexShrink: 0 }} />
           {!collapsed && <span>Settings</span>}
         </button>
       </div>
@@ -205,5 +217,7 @@ const presetBtnStyle: React.CSSProperties = {
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',
-  gap: '6px'
+  gap: '6px',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden'
 };

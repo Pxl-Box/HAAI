@@ -1,12 +1,25 @@
-import { HAConfig, HAState, HADevice, HAArea, HAAutomation, HALovelaceConfig, HACSPlugin } from '../types/homeassistant';
+import { HAConfig, HAState, HADevice, HAArea, HAFloor, HAAutomation, HALovelaceConfig, HACSPlugin } from '../types/homeassistant';
 
 const STORAGE_KEYS = {
   HA_CONFIG: 'haai_ha_config',
   AI_PROVIDERS: 'haai_ai_providers',
   ACTIVE_PROVIDER: 'haai_active_provider',
   CHAT_THREADS: 'haai_chat_threads',
-  ACTIVE_THREAD_ID: 'haai_active_thread_id'
+  ACTIVE_THREAD_ID: 'haai_active_thread_id',
+  DIGITAL_TWIN: 'haai_digital_twin_cache'
 };
+
+export interface HADigitalTwin {
+  lastUpdated: string;
+  states: HAState[];
+  lovelaceConfig: HALovelaceConfig | null;
+  automationConfigs: Record<string, any>;
+  areas?: HAArea[];
+  floors?: HAFloor[];
+  devices?: HADevice[];
+  entityRegistry?: any[];
+  entityCount: number;
+}
 
 export class StorageService {
   static getHAConfig(): HAConfig | null {
@@ -50,6 +63,20 @@ export class StorageService {
 
   static saveActiveThreadId(id: string): void {
     localStorage.setItem(STORAGE_KEYS.ACTIVE_THREAD_ID, id);
+  }
+
+  // --- DIGITAL TWIN SOURCE OF TRUTH LOCAL CACHE ---
+  static getDigitalTwin(): HADigitalTwin | null {
+    const raw = localStorage.getItem(STORAGE_KEYS.DIGITAL_TWIN);
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  static saveDigitalTwin(twin: HADigitalTwin): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.DIGITAL_TWIN, JSON.stringify(twin));
+    } catch (e) {
+      console.warn('Digital Twin local cache quota alert, saving essential entities.', e);
+    }
   }
 
   static clearAll(): void {
