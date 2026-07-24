@@ -215,7 +215,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginTop: '16px' }}>
                 <button className="btn btn-secondary" onClick={handleTestHA} disabled={haTesting}>
                   {haTesting ? 'Testing...' : 'Test Connection'}
                 </button>
@@ -229,6 +229,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }}
                 >
                   🧪 Load Test Sandbox Credentials
+                </button>
+              </div>
+
+              <div style={{ marginTop: '28px', paddingTop: '20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#ef4444', marginBottom: '6px' }}>
+                  Reset & Clear All Cached Data
+                </label>
+                <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '12px' }}>
+                  Clears all local Home Assistant credentials, cached Digital Twin source-of-truth data, AI settings, and chat history. The application will restart like brand new.
+                </p>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', padding: '10px 16px' }}
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to clear all data and reset HAAI? This will erase local cache and prompt for Home Assistant setup.')) {
+                      StorageService.clearAll();
+                      window.location.reload();
+                    }
+                  }}
+                >
+                  🗑️ Clear All Cached Data & Reset App
                 </button>
               </div>
             </div>

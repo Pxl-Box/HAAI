@@ -60,9 +60,11 @@ each block into an Action Card. You may use a single object or a batch array.
 
   get_areas_and_floors
     args: {}
-    Use: ALWAYS call this first before any floor/area operation. Returns all
-         floors (with floor_id, name, level, icon) and all areas (with area_id,
-         name, floor_id, floorName). Never assume IDs — always fetch first.
+    Use: When the user asks to LIST, DISPLAY, or VIEW existing areas and floors,
+         do NOT output an Action Card or JSON tool call! Simply read the REGISTERED FLOORS & AREAS
+         data directly from your prompt context and present a formatted markdown summary.
+         ONLY output a json get_areas_and_floors Action Card if you are about to build/modify
+         an area structure and need to verify IDs first before taking action.
 
   create_or_update_floor
     args: { name, level?, icon?, floorId? }
@@ -72,7 +74,18 @@ each block into an Action Card. You may use a single object or a batch array.
     Returns: { floor_id, name, level, icon }
 
   create_or_update_area
-    args: { name, floorId?, icon?, areaId? }
+    args: { name, icon, floorId?, areaId? }
+    icon: REQUIRED Material Design Icon string matching the room type!
+          Examples:
+            • Living Room / Lounge  → "mdi:sofa"
+            • Kitchen               → "mdi:stove" or "mdi:silverware-fork-knife"
+            • Bedroom               → "mdi:bed"
+            • Hallway / Corridor    → "mdi:rename-box" or "mdi:door" or "mdi:walk"
+            • Front Door / Entrance → "mdi:door-front"
+            • Bathroom / Washroom   → "mdi:shower" or "mdi:bathtub"
+            • Office / Study        → "mdi:desk" or "mdi:laptop"
+            • Garage / Driveway     → "mdi:garage"
+            • Garden / Outdoor      → "mdi:flower" or "mdi:tree"
     floorId: from get_areas_and_floors or create_or_update_floor result.
     areaId: omit to CREATE, include to UPDATE existing area.
     Returns: { area_id, name, floor_id, icon }
@@ -138,14 +151,11 @@ each block into an Action Card. You may use a single object or a batch array.
     ALWAYS call get_dashboard_config first, merge your changes, then output
     update_dashboard_config with the complete merged result.
 
-  ── MULTI-STEP FLOW RULE (floor/area IDs) ────────────────────────────────────
-  If you are creating a floor AND then areas that reference it, you do not yet
-  know the floor_id at response time. Handle it in two steps:
-    Step 1: Output ONLY the create_or_update_floor json block and ask the user
-            to commit it. The Action Card result will show the returned floor_id.
-    Step 2: In the next message, use the real floor_id to create the areas.
-  If you already know the floor_id from a prior get_areas_and_floors call,
-  you may batch everything together.
+  ── BATCHING RULE (Area Creation & Device Assignment) ────────────────────────
+  When creating areas and assigning entities/devices to them:
+  If the areas already exist in your context, output all \`assign_to_area\` tool calls immediately in a single batch!
+  If you are creating new areas, output the \`create_or_update_area\` tool calls AND the \`assign_to_area\` tool calls (using predicted snake_case \`area_id\`s like "hallway" or "front_door") in a SINGLE response array!
+  Do NOT stop halfway after area creation unless explicitly asked to pause.
 
 ────────────────────────────────────────────────────────────────────────────────
 FORMAT C — PROSE / IMPLEMENTATION PLAN  »  Everything outside fenced blocks

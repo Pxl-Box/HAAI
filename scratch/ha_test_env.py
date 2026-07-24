@@ -66,10 +66,13 @@ STATES = {
 }
 
 AUTOMATION_CONFIGS = {}
+FLOORS = [
+  {"floor_id": "ground_floor", "name": "Ground Floor", "level": 0, "icon": "mdi:home-floor-0"}
+]
 AREAS = [
-  {"area_id": "living_room", "name": "Living Room"},
-  {"area_id": "hallway", "name": "Hallway"},
-  {"area_id": "front_door", "name": "Front Door"}
+  {"area_id": "living_room", "name": "Living Room", "floor_id": "ground_floor"},
+  {"area_id": "hallway", "name": "Hallway", "floor_id": "ground_floor"},
+  {"area_id": "front_door", "name": "Front Door", "floor_id": "ground_floor"}
 ]
 DEVICES = []
 ENTITIES_REGISTRY = []
@@ -173,7 +176,7 @@ async def handle_automation_post(request):
 async def handle_lovelace_config(request):
   return web.json_response({"title": "Test Dashboard", "views": []})
 
-# WebSocket handler
+# WebSocket handler with full CRUD support for floors and areas
 async def handle_websocket(request):
   ws = web.WebSocketResponse()
   await ws.prepare(request)
@@ -186,12 +189,61 @@ async def handle_websocket(request):
         msg_type = data.get('type')
         msg_id = data.get('id')
 
-        if msg_type == 'auth_required':
+        if msg_type == 'auth_required' or msg_type == 'auth':
           await ws.send_json({"type": "auth_ok", "ha_version": "2026.7.0.test"})
-        elif msg_type == 'auth':
-          await ws.send_json({"type": "auth_ok", "ha_version": "2026.7.0.test"})
+
+        # --- FLOOR REGISTRY ---
+        elif msg_type == 'config/floor_registry/list':
+          await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": FLOORS})
+
+        elif msg_type == 'config/floor_registry/create':
+          floor_name = data.get('name', 'New Floor')
+          floor_id = data.get('floor_id') or floor_name.lower().replace(' ', '_')
+          new_floor = {
+            "floor_id": floor_id,
+            "name": floor_name,
+            "level": data.get('level', 0),
+            "icon": data.get('icon', 'mdi:home-floor-0')
+          }
+          FLOORS.append(new_floor)
+          print(f"⚡ [TEST HA CREATE FLOOR] {new_floor}")
+          await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": new_floor})
+
+        elif msg_type == 'config/floor_registry/update':
+          floor_id = data.get('floor_id')
+          target = next((f for f in FLOORS if f['floor_id'] == floor_id), None)
+          if target:
+            if 'name' in data: target['name'] = data['name']
+            if 'level' in data: target['level'] = data['level']
+            if 'icon' in data: target['icon'] = data['icon']
+          await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": target})
+
+        # --- AREA REGISTRY ---
         elif msg_type == 'config/area_registry/list':
           await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": AREAS})
+
+        elif msg_type == 'config/area_registry/create':
+          area_name = data.get('name', 'New Area')
+          area_id = data.get('area_id') or area_name.lower().replace(' ', '_')
+          new_area = {
+            "area_id": area_id,
+            "name": area_name,
+            "floor_id": data.get('floor_id'),
+            "icon": data.get('icon')
+          }
+          AREAS.append(new_area)
+          print(f"⚡ [TEST HA CREATE AREA] {new_area}")
+          await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": new_area})
+
+        elif msg_type == 'config/area_registry/update':
+          area_id = data.get('area_id')
+          target = next((a for a in AREAS if a['area_id'] == area_id), None)
+          if target:
+            if 'name' in data: target['name'] = data['name']
+            if 'floor_id' in data: target['floor_id'] = data['floor_id']
+          await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": target})
+
+        # --- OTHER REGISTRIES ---
         elif msg_type == 'config/device_registry/list':
           await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": DEVICES})
         elif msg_type == 'config/entity_registry/list':

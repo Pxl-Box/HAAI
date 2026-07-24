@@ -322,17 +322,22 @@ action: ${JSON.stringify(args.action, null, 2)}`;
 
       case 'create_or_update_floor': {
         let result;
-        if (args.floorId) {
-          result = await haService.updateFloor(args.floorId, { name: args.name, level: args.level, icon: args.icon });
+        const floorId = args.floorId || args.floor_id;
+        const level = args.level !== undefined ? args.level : args.Level;
+        const name = args.name || args.Name || 'New Floor';
+        const icon = args.icon || args.Icon;
+
+        if (floorId) {
+          result = await haService.updateFloor(floorId, { name, level, icon });
         } else {
-          result = await haService.createFloor(args.name, args.level, args.icon);
+          result = await haService.createFloor(name, level, icon);
         }
         return {
           toolCallId: id,
           name,
           success: true,
           result: {
-            message: `Floor "${args.name}" ${args.floorId ? 'updated' : 'created'} successfully in Home Assistant.`,
+            message: `Floor "${name}" ${floorId ? 'updated' : 'created'} successfully in Home Assistant.`,
             floor: result
           }
         };

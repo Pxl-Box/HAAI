@@ -131,8 +131,18 @@ export const App: React.FC = () => {
       imageUrls
     };
 
+    // Generate a smart contextual title if this is the first message in the thread
+    let newTitle = currentThread.title;
+    if (currentThread.messages.length === 0) {
+      const cleanPrompt = content.trim().replace(/^[^a-zA-Z0-9]+/, '');
+      if (cleanPrompt) {
+        newTitle = cleanPrompt.length > 36 ? `${cleanPrompt.substring(0, 36).trim()}...` : cleanPrompt;
+        newTitle = newTitle.charAt(0).toUpperCase() + newTitle.slice(1);
+      }
+    }
+
     const updatedMessages = [...currentThread.messages, userMsg];
-    const updatedThread = { ...currentThread, messages: updatedMessages, updatedAt: new Date().toISOString() };
+    const updatedThread = { ...currentThread, title: newTitle, messages: updatedMessages, updatedAt: new Date().toISOString() };
     const updatedThreads = threads.map(t => t.id === activeThreadId ? updatedThread : t);
 
     setThreads(updatedThreads);

@@ -32,7 +32,7 @@ export interface InferredDevice {
 // Reads the user's prompt and determines which mode the AI should operate in.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type UserIntent = 'CREATE' | 'REFACTOR' | 'EDIT';
+export type UserIntent = 'CREATE' | 'REFACTOR' | 'EDIT' | 'READ';
 
 export interface IntentResult {
   intent: UserIntent;
@@ -61,6 +61,11 @@ const EDIT_SIGNALS = [
   'remove from', 'replace', 'it keeps', 'broken', 'not working', 'wrong'
 ];
 
+const READ_SIGNALS = [
+  'list', 'show', 'display', 'get', 'view', 'what are', 'what areas',
+  'what floors', 'tell me', 'find', 'check', 'summary', 'report', 'see'
+];
+
 export class IntentClassifier {
   /**
    * Classify user intent and extract referenced automation/entity IDs from the prompt
@@ -70,21 +75,24 @@ export class IntentClassifier {
     const lower = prompt.toLowerCase();
 
     // Score each intent category
-    const createScore  = CREATE_SIGNALS.filter(w => lower.includes(w)).length;
+    const createScore   = CREATE_SIGNALS.filter(w => lower.includes(w)).length;
     const refactorScore = REFACTOR_SIGNALS.filter(w => lower.includes(w)).length;
-    const editScore    = EDIT_SIGNALS.filter(w => lower.includes(w)).length;
+    const editScore     = EDIT_SIGNALS.filter(w => lower.includes(w)).length;
+    const readScore     = READ_SIGNALS.filter(w => lower.includes(w)).length;
 
     let intent: UserIntent;
-    if (refactorScore > createScore && refactorScore >= editScore) {
+    if (readScore > 0 && createScore === 0 && refactorScore === 0 && editScore === 0) {
+      intent = 'READ';
+    } else if (refactorScore > createScore && refactorScore >= editScore) {
       intent = 'REFACTOR';
     } else if (editScore > createScore) {
       intent = 'EDIT';
     } else if (createScore > 0) {
       intent = 'CREATE';
+    } else if (readScore > 0) {
+      intent = 'READ';
     } else {
-      // Default: treat ambiguous prompts mentioning automation names as EDIT
-      // and truly unknown prompts as CREATE
-      intent = 'EDIT';
+      intent = 'READ';
     }
 
     // --- Match mentioned automations ---
@@ -245,7 +253,25 @@ export class LocalPreProcessor {
       }
     }
 
-    // 2. Friendly Name Prefix / Convention Fallback
+    // 2. Friendly Name / Entity ID matching against official registry areas
+    if (!isAssignedToArea && twin && twin.areas && twin.areas.length > 0) {
+      const matchedRegArea = twin.areas.find((a: any) => {
+        const areaNameLower = a.name.toLowerCase();
+        const areaIdLower = a.area_id.toLowerCase();
+        return (
+          friendlyName.includes(areaNameLower) ||
+          entityId.includes(areaIdLower) ||
+          (a.name.length > 3 && friendlyName.includes(a.name.toLowerCase()))
+        );
+      });
+
+      if (matchedRegArea) {
+        inferredArea = matchedRegArea.name;
+        isAssignedToArea = true;
+      }
+    }
+
+    // 3. Common room prefix fallback
     if (!isAssignedToArea) {
       if (rawFriendlyName.includes(':')) {
         inferredArea = rawFriendlyName.split(':')[0].trim();
@@ -444,6 +470,50 @@ SYSTEM HEALTH:
    • Offline/Unavailable: ${index.healthStatus.offlineCount}
    • Low Battery (<20%): ${index.healthStatus.batteryLowCount}
 ================================================================================`;
+
+    // ── READ: Information lookup mode (No YAML blocks or Action Cards) ──
+    if (intent === 'READ') {
+      const floors = twin.floors || [];
+      const areas = twin.areas || [];
+      const devices = twin.devices || [];
+      const floorTree = floors.length > 0
+        ? floors.map((f: any) => {
+            const floorAreas = areas.filter((a: any) => a.floor_id === f.floor_id);
+            return `  Floor: "${f.name}" (floor_id: ${f.floor_id}, level: ${f.level ?? 'unset'})
+${floorAreas.map((a: any) => `    └─ Area: "${a.name}" (area_id: ${a.area_id})`).join('\n') || '    └─ (no areas assigned yet)'}`;
+          }).join('\n')
+        : '  (no floors configured yet)';
+      const unassignedAreas = areas.filter((a: any) => !a.floor_id);
+
+      const deviceRegistrySummary = devices.length > 0
+        ? devices.map((d: any) => {
+            const areaObj = areas.find((a: any) => a.area_id === d.area_id);
+            return `  • Device: "${d.name || d.name_by_user || d.id}" (id: ${d.id}) -> Area: ${areaObj ? areaObj.name : 'Unassigned'} | Model: ${d.model || 'Unknown'} (${d.manufacturer || 'Generic'})`;
+          }).join('\n')
+        : '  (no hardware devices explicitly in HA device registry — listing all physical entities below)';
+
+      return `${header}
+INTENT: READ — The user is asking an informational/summary question.
+Provide a clear, markdown-formatted response listing ALL physical devices and entities requested.
+⚠️ CRITICAL: Do NOT output any \`\`\`yaml automation blocks or fake tool calls! This is a read-only informational query!
+
+REGISTERED HARDWARE DEVICES (${devices.length} in HA device registry):
+${deviceRegistrySummary}
+
+REGISTERED FLOORS & AREAS (${areas.length} total areas, ${floors.length} floors):
+${floorTree}
+${unassignedAreas.length > 0 ? `\nAREAS NOT ASSIGNED TO A FLOOR (${unassignedAreas.length}):\n${unassignedAreas.map((a: any) => `  • "${a.name}" (area_id: ${a.area_id})`).join('\n')}` : ''}
+
+ALL PHYSICAL SMART HOME ENTITIES (${categorized.length} total):
+  • Lights (${physicalLights.length}): ${physicalLights.map(l => `"${l.name}" (${l.entity_id}) [${l.areaName}]`).join('\n    ')}
+  • Switches & Plugs (${switches.length}): ${switches.map(s => `"${s.name}" (${s.entity_id}) [${s.areaName}]`).join('\n    ')}
+  • Sensors & Motion (${sensors.length}): ${sensors.map(s => `"${s.name}" (${s.entity_id}) [${s.areaName}]`).join('\n    ')}
+  • Climate / HVAC (${climate.length}): ${climate.map(c => `"${c.name}" (${c.entity_id}) [${c.areaName}]`).join('\n    ')}
+
+ALL REGISTERED AUTOMATIONS (${automations.length}):
+${automations.map(a => `  • "${a.name}" (${a.entity_id}) -> Status: ${a.state.toUpperCase()}`).join('\n')}
+${healthFooter}`;
+    }
 
     // ── CREATE: Full device/entity catalogue so AI knows what's available ──
     if (intent === 'CREATE') {
