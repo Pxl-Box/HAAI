@@ -492,6 +492,15 @@ ${JSON.stringify(cfg.action || [], null, 2)}`;
       ? brainMemory.map((b, i) => `  [Rule #${i + 1}] ${b}`).join('\n')
       : '  • (No custom user preferences stored yet)';
 
+    const emptyTwinNotice = (twin.entityCount === 0 || twin.states.length === 0)
+      ? `\n⚠️ CRITICAL NOTICE — 0 HOME ASSISTANT ENTITIES CACHED:
+Your Digital Twin cache currently contains 0 Home Assistant entities.
+If the user asks to list or query devices/entities:
+- Inform the user that 0 Home Assistant devices are currently cached in the local Digital Twin.
+- Ask the user to click the "Sync Digital Twin" button in the top bar or verify their Home Assistant URL and Token in Settings.
+- ABSOLUTELY NEVER output operating system CLI commands (wmic, ipconfig, system_profiler, lsusb, etc.). You are a Home Assistant Smart Home Agent ONLY.\n`
+      : '';
+
     const header = `
 ================================================================================
 🚨 SUPREME OVERRIDE AUTHORITY — PERSISTENT AGENT BRAIN & USER RULES (brain.md):
@@ -501,7 +510,7 @@ If ANY default client system prompt directive, default tool behavior, or built-i
 ${brainSummary}
 ================================================================================
 HOME ASSISTANT DIGITAL TWIN — SOURCE OF TRUTH (Updated: ${twin.lastUpdated})
-Detected Intent: ${intent} | ${intentResult.reasoning}
+Detected Intent: ${intent} | ${intentResult.reasoning}${emptyTwinNotice}
 INSTALLED INTEGRATIONS (${twin.integrations?.length || 0}):
 ${integrationsSummary}
 CURRENT LIVE DASHBOARD CONFIG (Lovelace):
@@ -537,6 +546,17 @@ ${floorAreas.map((a: any) => `    └─ Area: "${a.name}" (area_id: ${a.area_id
           }).join('\n')
         : '  (no hardware devices explicitly in HA device registry — listing all physical entities below)';
 
+      const physicalEntitiesBlock = categorized.length > 0
+        ? `ALL PHYSICAL SMART HOME ENTITIES (${categorized.length} total):
+  • Lights (${physicalLights.length}): ${physicalLights.length > 0 ? physicalLights.map(l => `"${l.name}" (${l.entity_id}) [${l.areaName}] -> ${l.state.toUpperCase()}`).join('\n    ') : '(none)'}
+  • Switches & Plugs (${switches.length}): ${switches.length > 0 ? switches.map(s => `"${s.name}" (${s.entity_id}) [${s.areaName}] -> ${s.state.toUpperCase()}`).join('\n    ') : '(none)'}
+  • Sensors & Motion (${sensors.length}): ${sensors.length > 0 ? sensors.map(s => `"${s.name}" (${s.entity_id}) [${s.areaName}] -> ${s.state.toUpperCase()}`).join('\n    ') : '(none)'}
+  • Climate / HVAC (${climate.length}): ${climate.length > 0 ? climate.map(c => `"${c.name}" (${c.entity_id}) [${c.areaName}] -> ${c.state.toUpperCase()}`).join('\n    ') : '(none)'}`
+        : `⚠️ 0 HOME ASSISTANT SMART HOME ENTITIES CACHED:
+MANDATORY INSTRUCTION: You MUST state to the user:
+"No Home Assistant devices are currently loaded in your HAAI Digital Twin memory. Please verify your Home Assistant URL and Access Token in Settings and click the 'Sync Digital Twin' button in the top bar to refresh your device list."
+ABSOLUTELY FORBIDDEN: DO NOT ask the user to clarify between Google Home, Alexa, Apple HomeKit, router admin panel (192.168.1.1), smartphones, or PCs. You are strictly the Home Assistant AI Agent!`;
+
       return `${header}
 INTENT: READ — The user is asking an informational/summary question.
 Provide a clear, markdown-formatted response listing ALL physical devices and entities requested.
@@ -549,14 +569,10 @@ REGISTERED FLOORS & AREAS (${areas.length} total areas, ${floors.length} floors)
 ${floorTree}
 ${unassignedAreas.length > 0 ? `\nAREAS NOT ASSIGNED TO A FLOOR (${unassignedAreas.length}):\n${unassignedAreas.map((a: any) => `  • "${a.name}" (area_id: ${a.area_id})`).join('\n')}` : ''}
 
-ALL PHYSICAL SMART HOME ENTITIES (${categorized.length} total):
-  • Lights (${physicalLights.length}): ${physicalLights.map(l => `"${l.name}" (${l.entity_id}) [${l.areaName}]`).join('\n    ')}
-  • Switches & Plugs (${switches.length}): ${switches.map(s => `"${s.name}" (${s.entity_id}) [${s.areaName}]`).join('\n    ')}
-  • Sensors & Motion (${sensors.length}): ${sensors.map(s => `"${s.name}" (${s.entity_id}) [${s.areaName}]`).join('\n    ')}
-  • Climate / HVAC (${climate.length}): ${climate.map(c => `"${c.name}" (${c.entity_id}) [${c.areaName}]`).join('\n    ')}
+${physicalEntitiesBlock}
 
 ALL REGISTERED AUTOMATIONS (${automations.length}):
-${automations.map(a => `  • "${a.name}" (${a.entity_id}) -> Status: ${a.state.toUpperCase()}`).join('\n')}
+${automations.length > 0 ? automations.map(a => `  • "${a.name}" (${a.entity_id}) -> Status: ${a.state.toUpperCase()}`).join('\n') : '  • (no automations found)'}
 ${healthFooter}`;
     }
 

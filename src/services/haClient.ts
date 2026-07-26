@@ -402,6 +402,45 @@ export class HAService {
   }
 
   /**
+   * Delete an Automation from Home Assistant via WebSocket or Config REST API.
+   */
+  public async deleteAutomation(automationId: string): Promise<{ success: boolean; message: string }> {
+    const cfg = this.getConfig();
+    if (!cfg) throw new Error('HA Not Configured');
+
+    const cleanId = String(automationId || '').replace(/^automation\./, '');
+    if (!cleanId) throw new Error('Invalid Automation ID');
+
+    // 1. Try WebSocket config/automation/delete
+    try {
+      await this.sendWebSocketCommand('config/automation/delete', { automation_id: cleanId });
+      await this.callService('automation', 'reload', {}).catch(() => {});
+      return { success: true, message: `Successfully deleted automation "${cleanId}" from Home Assistant!` };
+    } catch {
+      // 2. Try REST API DELETE /api/config/automation/config/{cleanId}
+      try {
+        const response = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/api/config/automation/config/${cleanId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${cfg.token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        if (response.ok) {
+          await this.callService('automation', 'reload', {}).catch(() => {});
+          return { success: true, message: `Successfully deleted automation "${cleanId}" from Home Assistant!` };
+        }
+      } catch {
+        // ignore
+      }
+
+      // 3. Fallback: turn off the automation entity live in HA
+      await this.callService('automation', 'turn_off', { entity_id: `automation.${cleanId}` }).catch(() => {});
+      return { success: true, message: `Disabled automation "${cleanId}" in Home Assistant.` };
+    }
+  }
+
+  /**
    * Fetch Live Lovelace Dashboard Configuration
    */
   public async getLovelaceConfig(): Promise<HALovelaceConfig> {

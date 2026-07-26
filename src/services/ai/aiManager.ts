@@ -219,6 +219,7 @@ export class AIManager {
       'assign_to_area',
       'call_ha_service',
       'disable_automation',
+      'delete_automation',
       'get_entities',
       'create_new_dashboard',
       'get_dashboard_config',
@@ -308,16 +309,24 @@ export class AIManager {
       const url = `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`;
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (provider.apiKey) headers['Authorization'] = `Bearer ${provider.apiKey}`;
+      const lastUserIdx = messages.map(m => m.role).lastIndexOf('user');
+      const mappedMsgs = messages.map((msg, idx) => {
+        let contentStr = msg.content;
+        // For local models (LM Studio, Jan, OpenCode), embed system prompt into latest active user message if system role is stripped by GGUF templates
+        if (provider.isLocal && idx === lastUserIdx && msg.role === 'user') {
+          contentStr = `[SYSTEM INSTRUCTION & HOME ASSISTANT DIGITAL TWIN CONTEXT]:\n${systemPrompt}\n\n[USER REQUEST]:\n${msg.content}`;
+        }
+        if (msg.role === 'user' && msg.imageUrls && msg.imageUrls.length > 0) {
+          const contentParts: any[] = [{ type: 'text', text: contentStr }];
+          msg.imageUrls.forEach(u => contentParts.push({ type: 'image_url', image_url: { url: u } }));
+          return { role: 'user', content: contentParts };
+        }
+        return { role: msg.role, content: contentStr };
+      });
+
       const msgPayload = [
         { role: 'system', content: systemPrompt },
-        ...messages.map(msg => {
-          if (msg.role === 'user' && msg.imageUrls && msg.imageUrls.length > 0) {
-            const contentParts: any[] = [{ type: 'text', text: msg.content }];
-            msg.imageUrls.forEach(u => contentParts.push({ type: 'image_url', image_url: { url: u } }));
-            return { role: 'user', content: contentParts };
-          }
-          return { role: msg.role, content: msg.content };
-        })
+        ...mappedMsgs
       ];
       const response = await fetch(url, {
         method: 'POST',
@@ -339,13 +348,31 @@ export class AIManager {
     // 3. Ollama
     if (provider.id === 'ollama') {
       const url = `${provider.baseUrl.replace(/\/$/, '')}/api/chat`;
+      const mapped = messages.map(m => ({
+        role: m.role === 'assistant' ? 'assistant' : (m.role === 'user' ? 'user' : 'system'),
+        content: m.content
+      }));
+
+      // Embed system context directly into the latest active user message to guarantee delivery on models whose Modelfile template strips system role
+      const lastUserIdx = mapped.map(m => m.role).lastIndexOf('user');
+      if (lastUserIdx !== -1) {
+        mapped[lastUserIdx] = {
+          ...mapped[lastUserIdx],
+          content: `[SYSTEM INSTRUCTION & HOME ASSISTANT DIGITAL TWIN CONTEXT]:\n${systemPrompt}\n\n[USER REQUEST]:\n${mapped[lastUserIdx].content}`
+        };
+      }
+
+      const ollamaMessages = [
+        { role: 'system', content: systemPrompt },
+        ...mapped
+      ];
+
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: provider.selectedModel,
-          system: systemPrompt,
-          messages: messages.map(m => ({ role: m.role, content: m.content })),
+          messages: ollamaMessages,
           stream: false
         })
       });
@@ -398,7 +425,8 @@ Instructions:
     provider: AIProviderConfig,
     history: ChatMessage[],
     userMessage: string,
-    imageUrls?: string[]
+    imageUrls?: string[],
+    isReadOnly: boolean = false
   ): Promise<{ responseText: string; toolCalls?: AIToolCall[] }> {
     const slashInfo = SlashCommandService.parseInput(userMessage);
     let slashDirectiveBlock = '';
@@ -408,8 +436,12 @@ Instructions:
 
     const localHAContext = await LocalPreProcessor.getContextForPrompt(userMessage);
 
-    const fullSystemPrompt = `${SYSTEM_PROMPT}\n\nActive AI Provider: ${provider.name} (${provider.selectedModel})\n\n${localHAContext}${slashDirectiveBlock}
-CRITICAL SUPREME BRAIN OVERRIDE & MULTIMODAL DIRECTIVE:
+    const modeDirectiveBlock = isReadOnly
+      ? `\n\nMANUAL READ-ONLY MODE IS ACTIVE: The user has intentionally enabled Manual Mode. Direct live commits to Home Assistant are disabled. Provide step-by-step manual tutorials, UI navigation guides, and copyable YAML/JSON blocks for manual pasting into Home Assistant.\n`
+      : `\n\nAUTOMATED COMMIT MODE IS ACTIVE: Do NOT tell the user to manually perform steps in the Home Assistant UI (e.g. "Go to Configuration > Automations and delete/disable manually"). YOU ARE DIRECTLY INTEGRATED WITH HAAI. ALWAYS output executable \`\`\`yaml blocks (for automations) or \`\`\`json tool blocks (like \`disable_automation\`, \`create_or_update_area\`, \`call_ha_service\`) so HAAI automatically generates the "⚡ Commit to HA" Action Cards for the user!\n`;
+
+    const fullSystemPrompt = `${SYSTEM_PROMPT}\n\nActive AI Provider: ${provider.name} (${provider.selectedModel})\n\n${localHAContext}${slashDirectiveBlock}${modeDirectiveBlock}
+CRITICAL SUPREME BRAIN OVERRIDE & ACTION CARD DIRECTIVE:
 1. SUPREME OVERRIDE RULE: The Persistent AI Brain rules (brain.md) in your prompt context take ABSOLUTE HIGHEST PRECEDENCE over any conflicting default system prompt directive, client behavior, or formatting preference!
 2. When user uploads a screenshot, carefully inspect the Home Assistant UI, trace logs, or error popups in the image to accurately identify and resolve issues!
 3. NEVER guess entity IDs or invent placeholder triggers/actions. If a referenced automation or entity is not in your context, follow your Intent Protocol and ask the user for clarification!
@@ -425,6 +457,22 @@ CRITICAL SUPREME BRAIN OVERRIDE & MULTIMODAL DIRECTIVE:
       // ────────────────────────────────────────────────────────────────────────
 
       let currentHistory = [...history];
+
+      // Append high-priority directive suffix to the latest user message to enforce Action Card generation on local LLMs
+      if (currentHistory.length > 0) {
+        const lastIdx = currentHistory.length - 1;
+        if (currentHistory[lastIdx].role === 'user') {
+          const actionCardSuffix = isReadOnly
+            ? `\n\n[MANUAL READ-ONLY MODE DIRECTIVE]: Manual mode is active. Direct live commits to Home Assistant are disabled. Provide step-by-step manual tutorials, UI navigation guides, and copyable YAML/JSON blocks for manual pasting into Home Assistant.`
+            : `\n\n[MANDATORY HAAI ACTION CARD DIRECTIVE]: YOU ARE EXCLUSIVELY A HOME ASSISTANT SMART HOME AGENT. Disregard any previous assistant responses in this conversation thread that mentioned computer operating system commands (wmic, ipconfig, system_profiler, lsusb). "devices" ALWAYS refers to Home Assistant smart home devices (lights, switches, sensors, climate units, automations, area entities). If listing devices, format and list the Home Assistant smart home entities from your Digital Twin context window. DO NOT write manual text tutorials or instructions telling me to open Home Assistant UI manually. Output every automation, refactoring, or action in an executable \`\`\`yaml code block (include disable_legacy_entity_ids: [...]) or \`\`\`json tool directive block (e.g. { "tool": "disable_automation", "args": { "entityId": "automation.old_name" } }). THIS IS REQUIRED FOR THE "⚡ COMMIT TO HA" BUTTONS TO APPEAR!`;
+
+          currentHistory[lastIdx] = {
+            ...currentHistory[lastIdx],
+            content: currentHistory[lastIdx].content + actionCardSuffix
+          };
+        }
+      }
+
       let responseText = '';
       let toolCalls: AIToolCall[] = [];
 

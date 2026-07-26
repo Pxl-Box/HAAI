@@ -54,6 +54,17 @@ export const HA_TOOLS: ToolDefinition[] = [
     }
   },
   {
+    name: 'delete_automation',
+    description: 'Permanently delete an automation from Home Assistant (removes it from automations.yaml and deletes its configuration).',
+    parameters: {
+      type: 'object',
+      properties: {
+        entityId: { type: 'string', description: 'Automation entity ID or ID to delete e.g. automation.always_on_hallway_lamp or always_on_hallway_lamp' }
+      },
+      required: ['entityId']
+    }
+  },
+  {
     name: 'analyze_entity_rename_safety',
     description: 'Analyze potential impact before renaming an entity ID. Checks for usage across all entities, automations, scripts, and dashboards.',
     parameters: {
@@ -232,6 +243,16 @@ export async function executeHATool(call: AIToolCall): Promise<AIToolResult> {
       }
 
       case 'call_ha_service': {
+        if (args.domain === 'automation' && (args.service === 'delete' || args.service === 'remove')) {
+          const targetId = args.serviceData?.entity_id || args.serviceData?.automation_id || args.serviceData?.id || args.entityId;
+          const res = await haService.deleteAutomation(targetId);
+          return {
+            toolCallId: id,
+            name,
+            success: true,
+            result: { message: res.message }
+          };
+        }
         const res = await haService.callService(args.domain, args.service, args.serviceData);
         return {
           toolCallId: id,
@@ -251,6 +272,19 @@ export async function executeHATool(call: AIToolCall): Promise<AIToolResult> {
           name,
           success: true,
           result: { message: `Successfully disabled legacy automation "${targetEntity}" live in Home Assistant.` }
+        };
+      }
+
+      case 'delete_automation': {
+        // Permanently delete automation config live in Home Assistant
+        const targetEntity = args.entityId || args.automationId || args.serviceData?.entity_id;
+        const res = await haService.deleteAutomation(targetEntity);
+
+        return {
+          toolCallId: id,
+          name,
+          success: true,
+          result: { message: res.message }
         };
       }
 

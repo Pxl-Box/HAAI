@@ -156,7 +156,7 @@ export const App: React.FC = () => {
     setIsSending(true);
 
     try {
-      const aiResponse = await AIManager.sendMessage(activeProvider, updatedMessages, content, imageUrls);
+      const aiResponse = await AIManager.sendMessage(activeProvider, updatedMessages, content, imageUrls, isReadOnly);
 
       // DO NOT auto-execute tool calls here. HAAI waits for the user to click "Commit to HA" in ChatWorkspace!
       let toolResults: AIToolResult[] | undefined = undefined;

@@ -116,8 +116,12 @@ export class StorageService {
       const twin = this.getDigitalTwin();
       if (twin?.brainMemory && twin.brainMemory.length > 0) {
         memories = twin.brainMemory;
-        localStorage.setItem(STORAGE_KEYS.BRAIN_MEMORY, JSON.stringify(memories));
+      } else {
+        memories = [
+          '[Client Capabilities & Overrides] Never output text instructions telling the user to manually perform actions in the Home Assistant UI. Always output executable YAML/JSON code blocks so HAAI automatically renders the "⚡ Commit to HA" Action Cards.'
+        ];
       }
+      localStorage.setItem(STORAGE_KEYS.BRAIN_MEMORY, JSON.stringify(memories));
     }
     return memories;
   }
