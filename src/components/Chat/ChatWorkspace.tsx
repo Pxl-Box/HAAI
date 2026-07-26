@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Wrench, CheckCircle, Eye, Monitor, Cpu, Copy, Check, Download, CheckSquare, ChevronDown, ChevronRight, Zap, Image as ImageIcon, X, Brain } from 'lucide-react';
+import { Send, Bot, User, Wrench, CheckCircle, Eye, Monitor, Cpu, Copy, Check, Download, CheckSquare, ChevronDown, ChevronRight, Zap, Image as ImageIcon, X, Brain, Terminal } from 'lucide-react';
 import { ChatMessage, AIToolCall, AIToolResult } from '../../types/ai';
 import { executeHATool } from '../../services/haTools';
 import { LocalPreProcessor } from '../../services/localPreProcessor';
+import { SlashCommandMenu } from './SlashCommandMenu';
+import { SlashCommandService } from '../../services/slashCommandService';
 
 interface ChatWorkspaceProps {
   messages: ChatMessage[];
@@ -31,8 +33,102 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [pasteFeedback, setPasteFeedback] = useState(false);
 
+  // Slash Command Autocomplete state
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleInputChange = (val: string) => {
+    setInput(val);
+    const trimmed = val.trimStart();
+    if (trimmed.startsWith('/')) {
+      setShowSlashMenu(true);
+    } else {
+      setShowSlashMenu(false);
+    }
+    setSlashSelectedIndex(0);
+  };
+
+  const handleSelectSlashCommand = (commandText: string) => {
+    setInput(commandText);
+    const trimmed = commandText.trimStart();
+    // Keep menu open for sub-commands if only main command was selected (ends with space)
+    if (trimmed.startsWith('/') && trimmed.split(/\s+/).length <= 2) {
+      setShowSlashMenu(true);
+    } else {
+      setShowSlashMenu(false);
+    }
+    setSlashSelectedIndex(0);
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showSlashMenu) return;
+
+    if (e.key === 'Escape') {
+      setShowSlashMenu(false);
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSlashSelectedIndex(prev => prev + 1);
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSlashSelectedIndex(prev => Math.max(0, prev - 1));
+      return;
+    }
+
+    if (e.key === 'Tab' || (e.key === 'Enter' && showSlashMenu)) {
+      // Get current list of items matching input
+      const trimmed = input.trimStart();
+      if (trimmed.startsWith('/')) {
+        const query = trimmed.slice(1);
+        const spaceIndex = query.indexOf(' ');
+        const allCmds = SlashCommandService.getAllCommands();
+        let targetText: string | null = null;
+
+        if (spaceIndex === -1) {
+          const filter = query.toLowerCase();
+          const matched = allCmds.filter(c => 
+            c.name.toLowerCase().includes(filter) || 
+            c.description.toLowerCase().includes(filter)
+          );
+          if (matched.length > 0) {
+            const idx = Math.min(slashSelectedIndex, matched.length - 1);
+            targetText = `/${matched[idx].name} `;
+          }
+        } else {
+          const mainName = query.slice(0, spaceIndex).toLowerCase();
+          const subQuery = query.slice(spaceIndex + 1).toLowerCase();
+          const mainCmd = allCmds.find(c => c.name.toLowerCase() === mainName);
+          if (mainCmd && mainCmd.subCommands) {
+            const matchedSubs = mainCmd.subCommands.filter(s =>
+              s.name.toLowerCase().includes(subQuery) ||
+              s.description.toLowerCase().includes(subQuery)
+            );
+            if (matchedSubs.length > 0) {
+              const idx = Math.min(slashSelectedIndex, matchedSubs.length - 1);
+              targetText = `/${mainCmd.name} ${matchedSubs[idx].name} `;
+            }
+          }
+        }
+
+        if (targetText) {
+          e.preventDefault();
+          handleSelectSlashCommand(targetText);
+        }
+      }
+    }
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -175,6 +271,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if ((!input.trim() && selectedImages.length === 0) || isSending) return;
+    setShowSlashMenu(false);
     onSendMessage(input.trim() || 'Please analyze this Home Assistant screenshot and fix any issues.', selectedImages.length > 0 ? selectedImages : undefined);
     setInput('');
     setSelectedImages([]);
@@ -679,8 +776,17 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       <form onSubmit={handleSubmit} style={{
         padding: '16px 20px',
         backgroundColor: '#111827',
-        borderTop: '1px solid rgba(255, 255, 255, 0.08)'
+        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+        position: 'relative'
       }}>
+        {showSlashMenu && (
+          <SlashCommandMenu
+            input={input}
+            onSelectCommand={handleSelectSlashCommand}
+            selectedIndex={slashSelectedIndex}
+          />
+        )}
+
         <input
           type="file"
           accept="image/*"
@@ -703,18 +809,20 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           </button>
 
           <input
+            ref={inputRef}
             className="input-field"
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => handleInputChange(e.target.value)}
+            onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={pasteFeedback ? '📋 Image pasted! Add a message or send directly...' : 'Ask AI to automate, fix a screenshot error, inspect, or build... (Ctrl+V to paste images)'}
+            placeholder={pasteFeedback ? '📋 Image pasted! Add a message or send directly...' : 'Type / for commands or ask AI freely... (Ctrl+V to paste images)'}
             disabled={isSending}
             style={{
               padding: '12px 16px',
               fontSize: '14px',
               flex: 1,
-              borderColor: pasteFeedback ? '#3b82f6' : undefined,
-              boxShadow: pasteFeedback ? '0 0 0 2px rgba(59, 130, 246, 0.35)' : undefined,
+              borderColor: pasteFeedback ? '#3b82f6' : (showSlashMenu ? '#3b82f6' : undefined),
+              boxShadow: (pasteFeedback || showSlashMenu) ? '0 0 0 2px rgba(59, 130, 246, 0.35)' : undefined,
               transition: 'border-color 0.2s ease, box-shadow 0.2s ease'
             }}
           />

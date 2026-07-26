@@ -1,5 +1,7 @@
 import { HAConfig, HAState, HADevice, HAArea, HAFloor, HAAutomation, HALovelaceConfig, HACSPlugin } from '../types/homeassistant';
 
+import { SlashCommand } from '../types/slashCommands';
+
 const STORAGE_KEYS = {
   HA_CONFIG: 'haai_ha_config',
   AI_PROVIDERS: 'haai_ai_providers',
@@ -8,7 +10,8 @@ const STORAGE_KEYS = {
   ACTIVE_THREAD_ID: 'haai_active_thread_id',
   DIGITAL_TWIN: 'haai_digital_twin_cache',
   READ_ONLY_MODE: 'haai_read_only_mode',
-  BRAIN_MEMORY: 'haai_brain_memory'
+  BRAIN_MEMORY: 'haai_brain_memory',
+  CUSTOM_SLASH_COMMANDS: 'haai_custom_slash_commands'
 };
 
 export interface HADigitalTwin {
@@ -187,14 +190,63 @@ export class StorageService {
     return combined;
   }
 
+  // --- CUSTOM SLASH COMMANDS MANAGEMENT ---
+  static getCustomSlashCommands(): SlashCommand[] {
+    const raw = localStorage.getItem(STORAGE_KEYS.CUSTOM_SLASH_COMMANDS);
+    return raw ? JSON.parse(raw) : [];
+  }
+
+  static saveCustomSlashCommands(commands: SlashCommand[]): void {
+    localStorage.setItem(STORAGE_KEYS.CUSTOM_SLASH_COMMANDS, JSON.stringify(commands));
+  }
+
+  static addCustomSlashCommand(cmd: SlashCommand): SlashCommand[] {
+    const existing = this.getCustomSlashCommands();
+    const cleanCmd: SlashCommand = {
+      ...cmd,
+      name: cmd.name.replace(/^\/+/, '').trim().toLowerCase(),
+      isCustom: true
+    };
+    const updated = [...existing.filter(c => c.name !== cleanCmd.name && c.id !== cleanCmd.id), cleanCmd];
+    this.saveCustomSlashCommands(updated);
+    return updated;
+  }
+
+  static updateCustomSlashCommand(id: string, updatedCmd: Partial<SlashCommand>): SlashCommand[] {
+    const existing = this.getCustomSlashCommands();
+    const updated = existing.map(cmd => {
+      if (cmd.id === id) {
+        return {
+          ...cmd,
+          ...updatedCmd,
+          name: (updatedCmd.name || cmd.name).replace(/^\/+/, '').trim().toLowerCase()
+        };
+      }
+      return cmd;
+    });
+    this.saveCustomSlashCommands(updated);
+    return updated;
+  }
+
+  static deleteCustomSlashCommand(id: string): SlashCommand[] {
+    const existing = this.getCustomSlashCommands();
+    const updated = existing.filter(cmd => cmd.id !== id);
+    this.saveCustomSlashCommands(updated);
+    return updated;
+  }
+
   /**
    * Resets local app configuration and cached twin, BUT IMMUTABLY PRESERVES THE AI BRAIN MEMORY.
    */
   static clearAll(): void {
     const brainBackup = this.getBrainMemory();
+    const customCmds = this.getCustomSlashCommands();
     localStorage.clear();
     if (brainBackup && brainBackup.length > 0) {
       localStorage.setItem(STORAGE_KEYS.BRAIN_MEMORY, JSON.stringify(brainBackup));
+    }
+    if (customCmds && customCmds.length > 0) {
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_SLASH_COMMANDS, JSON.stringify(customCmds));
     }
   }
 }

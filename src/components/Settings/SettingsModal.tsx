@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Server, Cpu, CheckCircle2, AlertCircle, RefreshCw, Brain, Plus, Trash2, 
-  Edit2, Download, Upload, Search, ShieldCheck, Check, Sparkles, FileText
+  Edit2, Download, Upload, Search, ShieldCheck, Check, Sparkles, FileText, Terminal, Zap
 } from 'lucide-react';
 import { HAConfig } from '../../types/homeassistant';
 import { AIProviderConfig, AIProviderId } from '../../types/ai';
+import { SlashCommand, BUILTIN_SLASH_COMMANDS } from '../../types/slashCommands';
 import { haService } from '../../services/haClient';
 import { AIManager, DEFAULT_PROVIDERS } from '../../services/ai/aiManager';
 import { StorageService } from '../../services/storage';
@@ -28,7 +29,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   onSettingsSaved
 }) => {
-  const [activeTab, setActiveTab] = useState<'ha' | 'ai' | 'brain'>('ha');
+  const [activeTab, setActiveTab] = useState<'ha' | 'ai' | 'brain' | 'commands'>('ha');
 
   // HA State
   const [haUrl, setHaUrl] = useState('');
@@ -51,6 +52,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [brainSearch, setBrainSearch] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Custom Slash Commands State
+  const [customCmds, setCustomCmds] = useState<SlashCommand[]>([]);
+  const [newCmdName, setNewCmdName] = useState('');
+  const [newCmdDesc, setNewCmdDesc] = useState('');
+  const [newCmdPrompt, setNewCmdPrompt] = useState('');
+  const [editingCmdId, setEditingCmdId] = useState<string | null>(null);
+  const [editingCmdName, setEditingCmdName] = useState('');
+  const [editingCmdDesc, setEditingCmdDesc] = useState('');
+  const [editingCmdPrompt, setEditingCmdPrompt] = useState('');
+
   useEffect(() => {
     if (isOpen) {
       const ha = StorageService.getHAConfig();
@@ -64,8 +75,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setActiveProviderId(currentActive || 'ollama');
 
       setBrainMemories(StorageService.getBrainMemory());
+      setCustomCmds(StorageService.getCustomSlashCommands());
     }
   }, [isOpen]);
+
+  const handleAddCustomCommand = () => {
+    if (!newCmdName.trim() || !newCmdPrompt.trim()) return;
+    const cleanName = newCmdName.trim().replace(/^\/+/, '').toLowerCase();
+    const newCmd: SlashCommand = {
+      id: `custom_cmd_${Date.now()}`,
+      name: cleanName,
+      description: newCmdDesc.trim() || `Custom /${cleanName} directive prompt`,
+      injectedPrompt: newCmdPrompt.trim(),
+      isCustom: true
+    };
+    const updated = StorageService.addCustomSlashCommand(newCmd);
+    setCustomCmds(updated);
+    setNewCmdName('');
+    setNewCmdDesc('');
+    setNewCmdPrompt('');
+  };
+
+  const handleStartEditCustomCmd = (cmd: SlashCommand) => {
+    setEditingCmdId(cmd.id);
+    setEditingCmdName(cmd.name);
+    setEditingCmdDesc(cmd.description);
+    setEditingCmdPrompt(cmd.injectedPrompt);
+  };
+
+  const handleSaveEditCustomCmd = (id: string) => {
+    if (!editingCmdName.trim() || !editingCmdPrompt.trim()) return;
+    const updated = StorageService.updateCustomSlashCommand(id, {
+      name: editingCmdName.trim(),
+      description: editingCmdDesc.trim(),
+      injectedPrompt: editingCmdPrompt.trim()
+    });
+    setCustomCmds(updated);
+    setEditingCmdId(null);
+  };
+
+  const handleDeleteCustomCmd = (id: string) => {
+    const updated = StorageService.deleteCustomSlashCommand(id);
+    setCustomCmds(updated);
+  };
 
   const handleAddMemory = () => {
     if (!newMemoryInput.trim()) return;
@@ -298,7 +350,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               borderBottom: activeTab === 'brain' ? '2px solid #c084fc' : '2px solid transparent'
             }}
           >
-            <Brain size={16} /> AI Brain & Client Capabilities
+            <Brain size={16} /> AI Brain
+          </button>
+          <button
+            onClick={() => setActiveTab('commands')}
+            style={{
+              flex: 1,
+              padding: '12px',
+              border: 'none',
+              background: activeTab === 'commands' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
+              color: activeTab === 'commands' ? '#60a5fa' : '#9ca3af',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              borderBottom: activeTab === 'commands' ? '2px solid #3b82f6' : '2px solid transparent'
+            }}
+          >
+            <Terminal size={16} /> Slash Commands
           </button>
         </div>
 
@@ -702,6 +774,218 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'commands' && (
+            <div>
+              <div style={{
+                marginBottom: '16px',
+                padding: '12px 16px',
+                backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                borderRadius: '8px',
+                border: '1px solid rgba(59, 130, 246, 0.2)'
+              }}>
+                <div style={{ fontSize: '13px', color: '#60a5fa', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Terminal size={16} /> Custom Slash Command Management
+                </div>
+                <p style={{ marginTop: '4px', fontSize: '12px', color: '#94a3b8', margin: 0, lineHeight: 1.5 }}>
+                  Create custom slash commands (e.g. <code>/lighting</code> or <code>/garden</code>) with injected prompt directives. When invoked, these injected instructions explicitly guide the AI's intent and scope.
+                </p>
+              </div>
+
+              {/* Add Custom Command Form */}
+              <div style={{
+                backgroundColor: '#1f2937',
+                padding: '16px',
+                borderRadius: '10px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                marginBottom: '20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px'
+              }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#f3f4f6' }}>Add New Custom Command</div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <div style={{ flex: '0 0 160px' }}>
+                    <label style={{ display: 'block', fontSize: '11px', color: '#9ca3af', marginBottom: '4px' }}>Command Name</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="/mycommand"
+                      value={newCmdName}
+                      onChange={e => setNewCmdName(e.target.value)}
+                      style={{ fontSize: '13px' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '11px', color: '#9ca3af', marginBottom: '4px' }}>Description / Subtext</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="Short description displayed in slash autocomplete popup"
+                      value={newCmdDesc}
+                      onChange={e => setNewCmdDesc(e.target.value)}
+                      style={{ fontSize: '13px' }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: '#9ca3af', marginBottom: '4px' }}>Injected System Prompt Directive</label>
+                  <textarea
+                    className="input-field"
+                    rows={3}
+                    placeholder="Enter system instruction block to inject when this command is triggered..."
+                    value={newCmdPrompt}
+                    onChange={e => setNewCmdPrompt(e.target.value)}
+                    style={{ width: '100%', fontSize: '13px', resize: 'vertical' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleAddCustomCommand}
+                    disabled={!newCmdName.trim() || !newCmdPrompt.trim()}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Plus size={16} /> Save Custom Command
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Commands List */}
+              {customCmds.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#f3f4f6', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Sparkles size={14} color="#c084fc" /> Custom Active Commands ({customCmds.length})
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {customCmds.map(cmd => (
+                      <div
+                        key={cmd.id}
+                        style={{
+                          backgroundColor: '#111827',
+                          border: '1px solid rgba(168, 85, 247, 0.3)',
+                          borderRadius: '8px',
+                          padding: '12px 14px'
+                        }}
+                      >
+                        {editingCmdId === cmd.id ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                              <input
+                                className="input-field"
+                                value={editingCmdName}
+                                onChange={e => setEditingCmdName(e.target.value)}
+                                placeholder="Command Name"
+                                style={{ width: '160px', fontSize: '13px' }}
+                              />
+                              <input
+                                className="input-field"
+                                value={editingCmdDesc}
+                                onChange={e => setEditingCmdDesc(e.target.value)}
+                                placeholder="Description"
+                                style={{ flex: 1, fontSize: '13px' }}
+                              />
+                            </div>
+                            <textarea
+                              className="input-field"
+                              rows={2}
+                              value={editingCmdPrompt}
+                              onChange={e => setEditingCmdPrompt(e.target.value)}
+                              style={{ fontSize: '13px' }}
+                            />
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                              <button className="btn btn-primary" onClick={() => handleSaveEditCustomCmd(cmd.id)} style={{ padding: '4px 10px', fontSize: '12px' }}>
+                                <Check size={14} /> Save
+                              </button>
+                              <button className="btn btn-secondary" onClick={() => setEditingCmdId(null)} style={{ padding: '4px 10px', fontSize: '12px' }}>
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#c084fc', fontSize: '14px' }}>
+                                  /{cmd.name}
+                                </span>
+                                <span style={{ fontSize: '12px', color: '#9ca3af' }}>— {cmd.description}</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '4px' }}>
+                                <button
+                                  onClick={() => handleStartEditCustomCmd(cmd)}
+                                  style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: '4px' }}
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteCustomCmd(cmd.id)}
+                                  style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#cbd5e1', backgroundColor: '#1f2937', padding: '8px 10px', borderRadius: '6px', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                              {cmd.injectedPrompt}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Built-in Commands Reference */}
+              <div>
+                <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#f3f4f6', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Zap size={14} color="#60a5fa" /> Built-In System Commands Reference ({BUILTIN_SLASH_COMMANDS.length})
+                </h4>
+                <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {BUILTIN_SLASH_COMMANDS.map(b => (
+                    <div
+                      key={b.id}
+                      style={{
+                        padding: '10px 12px',
+                        backgroundColor: '#1f2937',
+                        borderRadius: '8px',
+                        border: '1px solid rgba(255, 255, 255, 0.06)'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#60a5fa', fontSize: '13px' }}>
+                          /{b.name}
+                        </span>
+                        <span style={{ fontSize: '12px', color: '#9ca3af' }}>{b.description}</span>
+                      </div>
+                      {b.subCommands && b.subCommands.length > 0 && (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
+                          {b.subCommands.map(sub => (
+                            <span
+                              key={sub.name}
+                              style={{
+                                fontSize: '11px',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                                color: '#93c5fd',
+                                border: '1px solid rgba(59, 130, 246, 0.3)',
+                                fontFamily: 'monospace'
+                              }}
+                              title={sub.description}
+                            >
+                              {sub.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
         </div>

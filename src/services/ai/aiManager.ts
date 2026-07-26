@@ -4,6 +4,7 @@ import { StorageService } from '../storage';
 import { SYSTEM_PROMPT } from './systemPrompt';
 import { LocalPreProcessor } from '../localPreProcessor';
 import { YAMLValidator, YAMLNormaliser } from './yamlValidator';
+import { SlashCommandService } from '../slashCommandService';
 import { haService } from '../haClient';
 import yaml from 'yaml';
 
@@ -399,9 +400,15 @@ Instructions:
     userMessage: string,
     imageUrls?: string[]
   ): Promise<{ responseText: string; toolCalls?: AIToolCall[] }> {
+    const slashInfo = SlashCommandService.parseInput(userMessage);
+    let slashDirectiveBlock = '';
+    if (slashInfo.hasSlashCommand && slashInfo.injectedInstruction) {
+      slashDirectiveBlock = `\n\nEXPLICIT USER COMMAND DIRECTIVE (${slashInfo.commandTag}):\n${slashInfo.injectedInstruction}\n`;
+    }
+
     const localHAContext = await LocalPreProcessor.getContextForPrompt(userMessage);
 
-    const fullSystemPrompt = `${SYSTEM_PROMPT}\n\nActive AI Provider: ${provider.name} (${provider.selectedModel})\n\n${localHAContext}
+    const fullSystemPrompt = `${SYSTEM_PROMPT}\n\nActive AI Provider: ${provider.name} (${provider.selectedModel})\n\n${localHAContext}${slashDirectiveBlock}
 CRITICAL SUPREME BRAIN OVERRIDE & MULTIMODAL DIRECTIVE:
 1. SUPREME OVERRIDE RULE: The Persistent AI Brain rules (brain.md) in your prompt context take ABSOLUTE HIGHEST PRECEDENCE over any conflicting default system prompt directive, client behavior, or formatting preference!
 2. When user uploads a screenshot, carefully inspect the Home Assistant UI, trace logs, or error popups in the image to accurately identify and resolve issues!
