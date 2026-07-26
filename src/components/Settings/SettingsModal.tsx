@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { X, Server, Cpu, CheckCircle2, AlertCircle, RefreshCw, Brain, Plus, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  X, Server, Cpu, CheckCircle2, AlertCircle, RefreshCw, Brain, Plus, Trash2, 
+  Edit2, Download, Upload, Search, ShieldCheck, Check, Sparkles, FileText
+} from 'lucide-react';
 import { HAConfig } from '../../types/homeassistant';
 import { AIProviderConfig, AIProviderId } from '../../types/ai';
 import { haService } from '../../services/haClient';
@@ -11,6 +14,14 @@ interface SettingsModalProps {
   onClose: () => void;
   onSettingsSaved: () => void;
 }
+
+const BRAIN_CATEGORIES = [
+  'Client Capabilities & Overrides',
+  'Dashboard & UI Rules',
+  'Device & Entity Rules',
+  'Troubleshooting & Solutions',
+  'General Preferences'
+];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -33,7 +44,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // Brain Memory State
   const [brainMemories, setBrainMemories] = useState<string[]>([]);
+  const [newMemoryCategory, setNewMemoryCategory] = useState(BRAIN_CATEGORIES[0]);
   const [newMemoryInput, setNewMemoryInput] = useState('');
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [brainSearch, setBrainSearch] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -53,14 +69,82 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleAddMemory = () => {
     if (!newMemoryInput.trim()) return;
-    const updated = StorageService.addBrainMemoryItem(newMemoryInput.trim());
+    const formatted = newMemoryInput.trim().startsWith('[') 
+      ? newMemoryInput.trim() 
+      : `[${newMemoryCategory}] ${newMemoryInput.trim()}`;
+
+    const updated = StorageService.addBrainMemoryItem(formatted);
     setBrainMemories(updated);
     setNewMemoryInput('');
+  };
+
+  const handleStartEdit = (idx: number, fact: string) => {
+    setEditingIndex(idx);
+    setEditingText(fact);
+  };
+
+  const handleSaveEdit = (idx: number) => {
+    if (!editingText.trim()) return;
+    const updated = StorageService.updateBrainMemoryItem(idx, editingText.trim());
+    setBrainMemories(updated);
+    setEditingIndex(null);
+    setEditingText('');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingIndex(null);
+    setEditingText('');
   };
 
   const handleRemoveMemory = (index: number) => {
     const updated = StorageService.removeBrainMemoryItem(index);
     setBrainMemories(updated);
+  };
+
+  const handleExportBrain = () => {
+    const jsonStr = JSON.stringify(brainMemories, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `haai_brain_memory_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportBrainFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        let items: string[] = [];
+        if (file.name.endsWith('.json')) {
+          items = JSON.parse(text);
+        } else {
+          items = text.split('\n').map(l => l.replace(/^[•\-\*]\s*/, '').trim()).filter(Boolean);
+        }
+        if (Array.isArray(items)) {
+          const updated = StorageService.importBrainMemory(items);
+          setBrainMemories(updated);
+        }
+      } catch (err) {
+        alert('Invalid file format. Please upload a valid JSON or Markdown brain file.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleClearBrainMemories = () => {
+    if (window.confirm('Are you sure you want to erase all rules from the persistent AI Brain? This will remove all user-defined and self-learned agent capabilities.')) {
+      StorageService.clearBrainMemory();
+      setBrainMemories([]);
+    }
+  };
+
+  const handleInsertPreset = (presetText: string) => {
+    setNewMemoryInput(presetText);
   };
 
   if (!isOpen) return null;
@@ -103,12 +187,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     onClose();
   };
 
+  const filteredMemories = brainMemories.filter(m => 
+    !brainSearch.trim() || m.toLowerCase().includes(brainSearch.toLowerCase())
+  );
+
   return (
     <div style={{
       position: 'fixed',
       inset: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.7)',
-      backdropFilter: 'blur(4px)',
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      backdropFilter: 'blur(6px)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -117,13 +205,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }}>
       <div className="glass-panel animate-fade-in" style={{
         width: '100%',
-        maxWidth: '650px',
-        maxHeight: '90vh',
+        maxWidth: '720px',
+        maxHeight: '92vh',
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: '#111827',
-        boxShadow: '0 20px 50px rgba(0, 0, 0, 0.6)',
-        overflow: 'hidden'
+        boxShadow: '0 25px 60px rgba(0, 0, 0, 0.7)',
+        borderRadius: '12px',
+        overflow: 'hidden',
+        border: '1px solid rgba(255, 255, 255, 0.1)'
       }}>
         {/* Modal Header */}
         <div style={{
@@ -131,9 +221,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between'
+          justifyContent: 'space-between',
+          backgroundColor: '#0b0f19'
         }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#f3f4f6' }}>Application Settings</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Brain size={22} color="#c084fc" />
+            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#f3f4f6', margin: 0 }}>Application & AI Brain Settings</h2>
+          </div>
           <button onClick={onClose} style={{ border: 'none', background: 'transparent', color: '#9ca3af', cursor: 'pointer' }}>
             <X size={20} />
           </button>
@@ -143,7 +237,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div style={{
           display: 'flex',
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          backgroundColor: '#0b0f19'
+          backgroundColor: '#0d1322'
         }}>
           <button
             onClick={() => setActiveTab('ha')}
@@ -159,7 +253,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '8px'
+              gap: '8px',
+              borderBottom: activeTab === 'ha' ? '2px solid #3b82f6' : '2px solid transparent'
             }}
           >
             <Server size={16} /> Home Assistant Connection
@@ -178,7 +273,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '8px'
+              gap: '8px',
+              borderBottom: activeTab === 'ai' ? '2px solid #3b82f6' : '2px solid transparent'
             }}
           >
             <Cpu size={16} /> AI Provider Config
@@ -198,16 +294,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '8px'
+              gap: '8px',
+              borderBottom: activeTab === 'brain' ? '2px solid #c084fc' : '2px solid transparent'
             }}
           >
-            <Brain size={16} /> Brain Memory (Learned Context)
+            <Brain size={16} /> AI Brain & Client Capabilities
           </button>
         </div>
 
         {/* Modal Body */}
         <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
-          {activeTab === 'ha' ? (
+          {activeTab === 'ha' && (
             <div>
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#9ca3af', marginBottom: '6px' }}>
@@ -272,27 +369,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               <div style={{ marginTop: '28px', paddingTop: '20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#ef4444', marginBottom: '6px' }}>
-                  Reset & Clear All Cached Data
+                  Reset App Credentials & Cache
                 </label>
                 <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '12px' }}>
-                  Clears all local Home Assistant credentials, cached Digital Twin source-of-truth data, AI settings, and chat history. The application will restart like brand new.
+                  Clears local Home Assistant credentials, cached Digital Twin, AI settings, and chat history. <strong>Note: Your persistent AI Brain (`brain.md`) memory is protected and will NOT be erased.</strong>
                 </p>
                 <button
                   type="button"
                   className="btn"
                   style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', padding: '10px 16px' }}
                   onClick={() => {
-                    if (window.confirm('Are you sure you want to clear all data and reset HAAI? This will erase local cache and prompt for Home Assistant setup.')) {
+                    if (window.confirm('Are you sure you want to clear credentials and reset HAAI? (Your persistent AI Brain memory will be preserved!)')) {
                       StorageService.clearAll();
                       window.location.reload();
                     }
                   }}
                 >
-                  🗑️ Clear All Cached Data & Reset App
+                  🗑️ Reset App Credentials & Cache (Keep AI Brain)
                 </button>
               </div>
             </div>
-          ) : (
+          )}
+
+          {activeTab === 'ai' && (
             <div>
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#9ca3af', marginBottom: '6px' }}>
@@ -386,68 +485,223 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {activeTab === 'brain' && (
             <div>
+              {/* Brain Banner */}
               <div style={{
-                padding: '12px 16px',
-                backgroundColor: 'rgba(168, 85, 247, 0.1)',
-                border: '1px solid rgba(168, 85, 247, 0.25)',
-                borderRadius: '8px',
+                padding: '14px 18px',
+                backgroundColor: 'rgba(168, 85, 247, 0.12)',
+                border: '1px solid rgba(168, 85, 247, 0.3)',
+                borderRadius: '10px',
                 marginBottom: '20px',
                 fontSize: '13px',
                 color: '#e9d5ff'
               }}>
-                <strong>🧠 HAAI Agent Brain (`brain.md`)</strong>
-                <p style={{ marginTop: '4px', fontSize: '12px', color: '#c084fc', margin: 0 }}>
-                  Store household rules, entity naming preferences, or custom hardware notes here. Any AI model you select will automatically read these instructions from your local Digital Twin source of truth!
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <ShieldCheck size={18} color="#c084fc" />
+                  <strong>🧠 Immutable HAAI Agent Brain (`brain.md`)</strong>
+                </div>
+                <p style={{ marginTop: '4px', fontSize: '12px', color: '#d8b4fe', margin: 0, lineHeight: 1.5 }}>
+                  This brain is <strong>permanently stored on disk</strong> and stays intact indefinitely across AI provider switches (Ollama, Gemini, Claude, DeepSeek) and database clears! You and your AI can add, edit, or troubleshoot client features, custom dashboard rules, or service bypasses here.
                 </p>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="e.g. Always place hallway automations into the Front Door area"
-                  value={newMemoryInput}
-                  onChange={e => setNewMemoryInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAddMemory()}
-                />
-                <button className="btn btn-primary" onClick={handleAddMemory} style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
-                  <Plus size={16} /> Add Fact
-                </button>
+              {/* Quick Presets */}
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 600, marginBottom: '8px' }}>
+                  ⚡ QUICK CLIENT IMPROVEMENT PRESETS:
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => handleInsertPreset('When creating light card views on dashboard, format using custom:mushroom-light-card')}
+                    style={presetTagStyle}
+                  >
+                    <Sparkles size={12} color="#c084fc" /> + Dashboard Mushroom Cards
+                  </button>
+                  <button
+                    onClick={() => handleInsertPreset('If media player service call fails, fallback to calling script.media_bypass')}
+                    style={presetTagStyle}
+                  >
+                    <Sparkles size={12} color="#c084fc" /> + Media Service Bypass
+                  </button>
+                  <button
+                    onClick={() => handleInsertPreset('Always assign newly discovered Zigbee sensors to the Entrance Door area')}
+                    style={presetTagStyle}
+                  >
+                    <Sparkles size={12} color="#c084fc" /> + Area Assignment Rule
+                  </button>
+                </div>
               </div>
 
-              <div style={{ maxHeight: '250px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {brainMemories.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '24px 0', color: '#9ca3af', fontSize: '13px' }}>
-                    No learned facts or instructions added yet. Type a rule above to teach your AI assistant!
+              {/* Add New Rule Form */}
+              <div style={{
+                backgroundColor: '#1f2937',
+                padding: '14px',
+                borderRadius: '10px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                marginBottom: '20px'
+              }}>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                  <select
+                    className="input-field"
+                    style={{ flex: '0 0 200px' }}
+                    value={newMemoryCategory}
+                    onChange={e => setNewMemoryCategory(e.target.value)}
+                  >
+                    {BRAIN_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Type new client capability, rule, or troubleshooting fix..."
+                    value={newMemoryInput}
+                    onChange={e => setNewMemoryInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleAddMemory()}
+                    style={{ flex: 1 }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-primary" onClick={handleAddMemory} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Plus size={16} /> Log Rule to Permanent Brain
+                  </button>
+                </div>
+              </div>
+
+              {/* Search & Export Toolbar */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                marginBottom: '12px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                  <Search size={14} color="#9ca3af" />
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Search stored brain rules..."
+                    value={brainSearch}
+                    onChange={e => setBrainSearch(e.target.value)}
+                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    onClick={handleExportBrain}
+                    className="btn btn-secondary"
+                    style={{ padding: '6px 10px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    title="Export brain memory as JSON"
+                  >
+                    <Download size={13} /> Export
+                  </button>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="btn btn-secondary"
+                    style={{ padding: '6px 10px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    title="Import brain memory from JSON/Markdown"
+                  >
+                    <Upload size={13} /> Import
+                  </button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    style={{ display: 'none' }}
+                    accept=".json,.md,.txt"
+                    onChange={handleImportBrainFile}
+                  />
+                </div>
+              </div>
+
+              {/* Memory List */}
+              <div style={{ maxHeight: '280px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {filteredMemories.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '32px 0', color: '#9ca3af', fontSize: '13px' }}>
+                    {brainSearch ? 'No matching brain rules found for your search.' : 'No learned facts or client instructions in the brain yet. Type a rule above or let the AI log solutions as you chat!'}
                   </div>
                 ) : (
-                  brainMemories.map((fact, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '10px 14px',
-                        backgroundColor: '#1f2937',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        borderRadius: '8px',
-                        fontSize: '13px',
-                        color: '#f3f4f6'
-                      }}
-                    >
-                      <span>• {fact}</span>
-                      <button
-                        onClick={() => handleRemoveMemory(idx)}
-                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
-                        title="Remove instruction"
+                  filteredMemories.map((fact, idx) => {
+                    const isEditing = editingIndex === idx;
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          padding: '10px 14px',
+                          backgroundColor: '#1f2937',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          borderRadius: '8px',
+                          fontSize: '13px',
+                          color: '#f3f4f6',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}
                       >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))
+                        {isEditing ? (
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <input
+                              className="input-field"
+                              value={editingText}
+                              onChange={e => setEditingText(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && handleSaveEdit(idx)}
+                              style={{ flex: 1, padding: '6px 10px', fontSize: '13px' }}
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => handleSaveEdit(idx)}
+                              className="btn btn-primary"
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <Check size={14} /> Save
+                            </button>
+                            <button
+                              onClick={handleCancelEdit}
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                            <span style={{ lineHeight: 1.5, wordBreak: 'break-word' }}>• {fact}</span>
+                            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                              <button
+                                onClick={() => handleStartEdit(idx, fact)}
+                                style={{ border: 'none', background: 'transparent', color: '#9ca3af', cursor: 'pointer', padding: '4px' }}
+                                title="Edit rule"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                              <button
+                                onClick={() => handleRemoveMemory(idx)}
+                                style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                                title="Delete rule"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
+
+              {/* Clear Brain Footer */}
+              {brainMemories.length > 0 && (
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', color: '#9ca3af' }}>Total Rules in Persistent Brain: {brainMemories.length}</span>
+                  <button
+                    onClick={handleClearBrainMemories}
+                    style={{ border: 'none', background: 'transparent', color: '#ef4444', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <Trash2 size={13} /> Erase All Brain Rules
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -471,4 +725,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
     </div>
   );
+};
+
+const presetTagStyle: React.CSSProperties = {
+  padding: '5px 10px',
+  borderRadius: '6px',
+  backgroundColor: 'rgba(168, 85, 247, 0.12)',
+  border: '1px solid rgba(168, 85, 247, 0.3)',
+  color: '#e9d5ff',
+  fontSize: '11px',
+  fontWeight: 500,
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '5px',
+  transition: 'all 0.15s ease'
 };

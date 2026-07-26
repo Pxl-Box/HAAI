@@ -149,6 +149,31 @@ export const HA_TOOLS: ToolDefinition[] = [
       },
       required: ['areaId']
     }
+  },
+  {
+    name: 'log_brain_memory',
+    description: 'Log a permanent instruction, client behavior rule, dashboard procedure, or troubleshooting solution into the persistent AI Brain memory (brain.md). Use this whenever the user teaches you how to handle a feature, fix a bug, format a dashboard, or customize client behavior.',
+    parameters: {
+      type: 'object',
+      properties: {
+        category: { type: 'string', description: 'Category e.g. "Client Capabilities", "Dashboard & UI Rules", "Device & Entity Rules", "Troubleshooting & Solutions", "General Preferences"' },
+        instruction: { type: 'string', description: 'Detailed instruction, rule, or learned facts to permanently remember' },
+        rationale: { type: 'string', description: 'Optional background context or user intent summary' }
+      },
+      required: ['instruction']
+    }
+  },
+  {
+    name: 'update_brain_memory',
+    description: 'Update or refine an existing instruction or rule in the persistent AI Brain memory.',
+    parameters: {
+      type: 'object',
+      properties: {
+        index: { type: 'number', description: 'Index of the memory entry to update (0-indexed)' },
+        newInstruction: { type: 'string', description: 'Updated text of the rule or instruction' }
+      },
+      required: ['index', 'newInstruction']
+    }
   }
 ];
 
@@ -159,7 +184,14 @@ export async function executeHATool(call: AIToolCall): Promise<AIToolResult> {
 
   // Check if Manual Read-Only Mode is active
   const isReadOnly = StorageService.getReadOnlyMode();
-  const readOnlyAllowedTools = new Set(['get_entities', 'get_areas_and_floors', 'get_dashboard_config', 'analyze_entity_rename_safety']);
+  const readOnlyAllowedTools = new Set([
+    'get_entities',
+    'get_areas_and_floors',
+    'get_dashboard_config',
+    'analyze_entity_rename_safety',
+    'log_brain_memory',
+    'update_brain_memory'
+  ]);
 
   if (isReadOnly && !readOnlyAllowedTools.has(name)) {
     return {
@@ -443,6 +475,60 @@ action: ${JSON.stringify(args.action, null, 2)}`;
             errors: errors.length > 0 ? errors : undefined
           },
           error: isSuccess ? undefined : errors.join(', ')
+        };
+      }
+
+      case 'log_brain_memory': {
+        const category = args.category || 'Self-Learned Capability & Instruction';
+        const rawInstruction = args.instruction || args.fact || '';
+        const cleanInstruction = rawInstruction.trim();
+
+        if (!cleanInstruction) {
+          return {
+            toolCallId: id,
+            name,
+            success: false,
+            error: 'Instruction text is required.'
+          };
+        }
+
+        const formatted = cleanInstruction.startsWith('[') ? cleanInstruction : `[${category}] ${cleanInstruction}`;
+        const updatedMemories = StorageService.addBrainMemoryItem(formatted);
+
+        return {
+          toolCallId: id,
+          name,
+          success: true,
+          result: {
+            message: `Logged new client rule/capability to AI Persistent Brain: "${formatted}"`,
+            totalMemories: updatedMemories.length,
+            brainMemories: updatedMemories
+          },
+          diffPreview: `🧠 AI PERSISTENT BRAIN UPDATED & SAVED TO DISK (brain.md):\n• Category: ${category}\n• Learned Rule: ${cleanInstruction}\n• Saved permanently across all AI models and database resets.`
+        };
+      }
+
+      case 'update_brain_memory': {
+        const index = args.index;
+        const newInstruction = args.newInstruction || args.instruction || '';
+        if (typeof index !== 'number' || !newInstruction.trim()) {
+          return {
+            toolCallId: id,
+            name,
+            success: false,
+            error: 'Valid index and newInstruction are required.'
+          };
+        }
+        const updated = StorageService.updateBrainMemoryItem(index, newInstruction.trim());
+        return {
+          toolCallId: id,
+          name,
+          success: true,
+          result: {
+            message: `Updated brain memory item #${index}`,
+            brainMemories: updated
+          },
+          diffPreview: `🧠 BRAIN RULE #${index} UPDATED:\n${newInstruction.trim()}`
         };
       }
 

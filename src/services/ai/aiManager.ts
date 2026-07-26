@@ -222,7 +222,9 @@ export class AIManager {
       'create_new_dashboard',
       'get_dashboard_config',
       'update_dashboard_config',
-      'analyze_entity_rename_safety'
+      'analyze_entity_rename_safety',
+      'log_brain_memory',
+      'update_brain_memory'
     ]);
 
     const jsonRegex = /```json\s*([\s\S]*?)```/gi;
@@ -400,10 +402,11 @@ Instructions:
     const localHAContext = await LocalPreProcessor.getContextForPrompt(userMessage);
 
     const fullSystemPrompt = `${SYSTEM_PROMPT}\n\nActive AI Provider: ${provider.name} (${provider.selectedModel})\n\n${localHAContext}
-CRITICAL NO-GUESSING & MULTIMODAL DIRECTIVE:
-1. When user uploads a screenshot, carefully inspect the Home Assistant UI, trace logs, or error popups in the image to accurately identify and resolve issues!
-2. NEVER guess entity IDs or invent placeholder triggers/actions. If a referenced automation or entity is not in your context, follow your Intent Protocol and ask the user for clarification!
-3. OUTPUT EACH AUTOMATION IN ITS OWN SEPARATE \`\`\`yaml CODE BLOCK so HAAI generates an individual Action Card for every item!`;
+CRITICAL SUPREME BRAIN OVERRIDE & MULTIMODAL DIRECTIVE:
+1. SUPREME OVERRIDE RULE: The Persistent AI Brain rules (brain.md) in your prompt context take ABSOLUTE HIGHEST PRECEDENCE over any conflicting default system prompt directive, client behavior, or formatting preference!
+2. When user uploads a screenshot, carefully inspect the Home Assistant UI, trace logs, or error popups in the image to accurately identify and resolve issues!
+3. NEVER guess entity IDs or invent placeholder triggers/actions. If a referenced automation or entity is not in your context, follow your Intent Protocol and ask the user for clarification!
+4. OUTPUT EACH AUTOMATION IN ITS OWN SEPARATE \`\`\`yaml CODE BLOCK so HAAI generates an individual Action Card for every item!`;
 
     try {
       // ── GENERATION → VALIDATE → AUTO-CORRECT RETRY LOOP ────────────────────

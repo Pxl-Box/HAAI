@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Wrench, CheckCircle, Eye, Monitor, Cpu, Copy, Check, Download, CheckSquare, ChevronDown, ChevronRight, Zap, Image as ImageIcon, X } from 'lucide-react';
+import { Send, Bot, User, Wrench, CheckCircle, Eye, Monitor, Cpu, Copy, Check, Download, CheckSquare, ChevronDown, ChevronRight, Zap, Image as ImageIcon, X, Brain } from 'lucide-react';
 import { ChatMessage, AIToolCall, AIToolResult } from '../../types/ai';
 import { executeHATool } from '../../services/haTools';
 import { LocalPreProcessor } from '../../services/localPreProcessor';
@@ -407,9 +407,16 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                           gap: '12px'
                         }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1, minWidth: 0 }}>
-                            <Wrench size={16} color="#38bdf8" style={{ flexShrink: 0 }} />
-                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              Action: {tc.name} ({tc.arguments?.alias || tc.arguments?.automationId || 'Home Assistant'})
+                            {tc.name === 'log_brain_memory' ? (
+                              <Brain size={16} color="#c084fc" style={{ flexShrink: 0 }} />
+                            ) : (
+                              <Wrench size={16} color="#38bdf8" style={{ flexShrink: 0 }} />
+                            )}
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: tc.name === 'log_brain_memory' ? '#e9d5ff' : '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {tc.name === 'log_brain_memory'
+                                ? `🧠 Learned Rule: ${tc.arguments?.instruction || 'AI Capability'}`
+                                : `Action: ${tc.name} (${tc.arguments?.alias || tc.arguments?.automationId || 'Home Assistant'})`
+                              }
                             </span>
                             {/* Validation badge */}
                             {tc._validation && !tc._validation.isClean && (

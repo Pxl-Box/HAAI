@@ -103,10 +103,20 @@ export class StorageService {
     localStorage.setItem(STORAGE_KEYS.READ_ONLY_MODE, String(enabled));
   }
 
-  // --- BRAIN MEMORY (AI PERSISTENT LEARNING) ---
+  // --- BRAIN MEMORY (AI PERSISTENT LEARNING - IMMUNE TO CLEARS & MODEL SWITCHES) ---
   static getBrainMemory(): string[] {
     const raw = localStorage.getItem(STORAGE_KEYS.BRAIN_MEMORY);
-    return raw ? JSON.parse(raw) : [];
+    let memories: string[] = raw ? JSON.parse(raw) : [];
+
+    // Fallback recovery: if localStorage was cleared, recover brain memory from Digital Twin cache
+    if (memories.length === 0) {
+      const twin = this.getDigitalTwin();
+      if (twin?.brainMemory && twin.brainMemory.length > 0) {
+        memories = twin.brainMemory;
+        localStorage.setItem(STORAGE_KEYS.BRAIN_MEMORY, JSON.stringify(memories));
+      }
+    }
+    return memories;
   }
 
   static addBrainMemoryItem(fact: string): string[] {
@@ -125,6 +135,22 @@ export class StorageService {
     return updated;
   }
 
+  static updateBrainMemoryItem(index: number, newFact: string): string[] {
+    const existing = this.getBrainMemory();
+    if (index < 0 || index >= existing.length) return existing;
+    const cleanFact = newFact.trim();
+    if (!cleanFact) return existing;
+    existing[index] = cleanFact;
+    localStorage.setItem(STORAGE_KEYS.BRAIN_MEMORY, JSON.stringify(existing));
+
+    const twin = this.getDigitalTwin();
+    if (twin) {
+      twin.brainMemory = existing;
+      this.saveDigitalTwin(twin);
+    }
+    return existing;
+  }
+
   static removeBrainMemoryItem(index: number): string[] {
     const existing = this.getBrainMemory();
     const updated = existing.filter((_, i) => i !== index);
@@ -138,7 +164,37 @@ export class StorageService {
     return updated;
   }
 
+  static clearBrainMemory(): void {
+    localStorage.removeItem(STORAGE_KEYS.BRAIN_MEMORY);
+    const twin = this.getDigitalTwin();
+    if (twin) {
+      twin.brainMemory = [];
+      this.saveDigitalTwin(twin);
+    }
+  }
+
+  static importBrainMemory(items: string[]): string[] {
+    const current = this.getBrainMemory();
+    const cleanNew = items.map(i => i.trim()).filter(Boolean);
+    const combined = Array.from(new Set([...current, ...cleanNew]));
+    localStorage.setItem(STORAGE_KEYS.BRAIN_MEMORY, JSON.stringify(combined));
+
+    const twin = this.getDigitalTwin();
+    if (twin) {
+      twin.brainMemory = combined;
+      this.saveDigitalTwin(twin);
+    }
+    return combined;
+  }
+
+  /**
+   * Resets local app configuration and cached twin, BUT IMMUTABLY PRESERVES THE AI BRAIN MEMORY.
+   */
   static clearAll(): void {
+    const brainBackup = this.getBrainMemory();
     localStorage.clear();
+    if (brainBackup && brainBackup.length > 0) {
+      localStorage.setItem(STORAGE_KEYS.BRAIN_MEMORY, JSON.stringify(brainBackup));
+    }
   }
 }
