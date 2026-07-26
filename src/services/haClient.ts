@@ -252,6 +252,16 @@ export class HAService {
     }
   }
 
+  public async getIntegrations(): Promise<any[]> {
+    try {
+      const result = await this.sendWebSocketCommand('config/config_entries/list');
+      return (result as any[]) || [];
+    } catch (err) {
+      console.warn('Failed to fetch integrations via WebSocket:', err);
+      return [];
+    }
+  }
+
   public async assignEntityToArea(entityId: string, areaId: string | null): Promise<any> {
     let targetAreaId = areaId;
 

@@ -141,13 +141,28 @@ export class LocalPreProcessor {
    * updates the local Digital Twin cache (Source of Truth), and returns the synchronized index.
    */
   public static async syncDigitalTwin(): Promise<HADigitalTwin> {
-    console.log('[Digital Twin] Syncing local Home Assistant Digital Twin...');
-    const states = await haService.getStates();
-    const lovelaceConfig = await haService.getLovelaceConfig().catch(() => null);
-    const areas = await haService.getAreas().catch(() => []);
-    const floors = await haService.getFloors().catch(() => []);
-    const devices = await haService.getDevices().catch(() => []);
-    const entityRegistry = await haService.getEntityRegistry().catch(() => []);
+    console.log('[Digital Twin] Clearing old content and resyncing live Home Assistant Source of Truth...');
+
+    // Fetch all source-of-truth components in parallel
+    const [
+      states,
+      lovelaceConfig,
+      areas,
+      floors,
+      devices,
+      entityRegistry,
+      integrations,
+      services
+    ] = await Promise.all([
+      haService.getStates(),
+      haService.getLovelaceConfig().catch(() => null),
+      haService.getAreas().catch(() => []),
+      haService.getFloors().catch(() => []),
+      haService.getDevices().catch(() => []),
+      haService.getEntityRegistry().catch(() => []),
+      haService.getIntegrations().catch(() => []),
+      haService.getServices().catch(() => [])
+    ]);
 
     const automations = states.filter(s => s.entity_id.startsWith('automation.'));
     const automationConfigs: Record<string, any> = {};
@@ -170,6 +185,8 @@ export class LocalPreProcessor {
       })
     );
 
+    const brainMemory = StorageService.getBrainMemory();
+
     const twin: HADigitalTwin = {
       lastUpdated: new Date().toISOString(),
       states,
@@ -179,10 +196,15 @@ export class LocalPreProcessor {
       floors,
       devices,
       entityRegistry,
+      integrations,
+      services,
+      brainMemory,
       entityCount: states.length
     };
 
+    // Save fresh Digital Twin, replacing previous state completely
     StorageService.saveDigitalTwin(twin);
+    console.log(`[Digital Twin] Successfully imported ${states.length} entities, ${areas.length} areas, ${floors.length} floors, ${devices.length} devices, ${integrations.length} integrations.`);
     return twin;
   }
 
@@ -461,10 +483,23 @@ ${JSON.stringify(cfg.action || [], null, 2)}`;
       ? JSON.stringify(twin.lovelaceConfig, null, 2)
       : '{"title": "Home Assistant", "views": []}';
 
+    const integrationsSummary = twin.integrations && twin.integrations.length > 0
+      ? twin.integrations.map((i: any) => `  • Integration: "${i.title || i.domain}" (domain: ${i.domain}, state: ${i.state || 'loaded'})`).join('\n')
+      : '  • (standard Home Assistant core integrations)';
+
+    const brainMemory = StorageService.getBrainMemory();
+    const brainSummary = brainMemory.length > 0
+      ? brainMemory.map(b => `  • ${b}`).join('\n')
+      : '  • (No custom user preferences stored yet)';
+
     const header = `
 ================================================================================
 HOME ASSISTANT DIGITAL TWIN — SOURCE OF TRUTH (Updated: ${twin.lastUpdated})
 Detected Intent: ${intent} | ${intentResult.reasoning}
+PERSISTENT BRAIN MEMORY & LEARNED USER PREFERENCES (brain.md):
+${brainSummary}
+INSTALLED INTEGRATIONS (${twin.integrations?.length || 0}):
+${integrationsSummary}
 CURRENT LIVE DASHBOARD CONFIG (Lovelace):
 ${lovelaceSummary}
 ================================================================================

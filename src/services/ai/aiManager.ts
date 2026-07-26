@@ -219,6 +219,7 @@ export class AIManager {
       'call_ha_service',
       'disable_automation',
       'get_entities',
+      'create_new_dashboard',
       'get_dashboard_config',
       'update_dashboard_config',
       'analyze_entity_rename_safety'

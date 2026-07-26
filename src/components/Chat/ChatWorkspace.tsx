@@ -11,6 +11,7 @@ interface ChatWorkspaceProps {
   providerName: string;
   isSending: boolean;
   isLocalProvider?: boolean;
+  isReadOnly?: boolean;
 }
 
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
@@ -19,7 +20,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   activeModel,
   providerName,
   isSending,
-  isLocalProvider
+  isLocalProvider,
+  isReadOnly
 }) => {
   const [input, setInput] = useState('');
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
@@ -61,6 +63,52 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     navigator.clipboard.writeText(text);
     setCopiedMsgId(msgId);
     setTimeout(() => setCopiedMsgId(null), 2000);
+  };
+
+  const getToolCodeString = (tc: AIToolCall): string => {
+    if (tc.name === 'create_or_update_automation') {
+      const args = tc.arguments || {};
+      const obj: any = {
+        id: args.automationId || 'automation_new',
+        alias: args.alias || 'Smart Automation',
+        description: args.description || '',
+        trigger: args.trigger || [],
+        condition: args.condition || [],
+        action: args.action || []
+      };
+      try {
+        return `# Copy and paste directly into Home Assistant automations.yaml or UI YAML mode:\n${JSON.stringify(obj, null, 2)}`;
+      } catch {
+        return JSON.stringify(args, null, 2);
+      }
+    }
+    return JSON.stringify({ tool: tc.name, args: tc.arguments }, null, 2);
+  };
+
+  const handleCopyToolCode = (tc: AIToolCall) => {
+    const code = getToolCodeString(tc);
+    navigator.clipboard.writeText(code);
+    setCommitStatus(prev => ({ ...prev, [tc.id]: '✓ Copied code to clipboard!' }));
+    setTimeout(() => {
+      setCommitStatus(prev => ({ ...prev, [tc.id]: '' }));
+    }, 2500);
+  };
+
+  const handleDownloadToolCode = (tc: AIToolCall) => {
+    const code = getToolCodeString(tc);
+    const filename = `${tc.name}_${tc.arguments?.alias || tc.arguments?.name || 'config'}.yaml`
+      .toLowerCase()
+      .replace(/[^a-z0-9_.-]/g, '_');
+    const blob = new Blob([code], { type: 'text/yaml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setCommitStatus(prev => ({ ...prev, [tc.id]: `✓ Downloaded ${filename}` }));
   };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -409,27 +457,71 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                           </div>
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {/* 1-Click Commit Button */}
-                            <button
-                              onClick={() => handleCommitAutomationDirect(tc)}
-                              disabled={isCommitted}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                padding: '6px 14px',
-                                fontSize: '12px',
-                                fontWeight: 600,
-                                borderRadius: '6px',
-                                border: 'none',
-                                cursor: isCommitted ? 'default' : 'pointer',
-                                backgroundColor: isCommitted ? '#065f46' : '#2563eb',
-                                color: '#ffffff'
-                              }}
-                            >
-                              {isCommitted ? <CheckCircle size={14} /> : <Zap size={14} />}
-                              {isCommitted ? '✓ Committed' : '⚡ Commit to HA'}
-                            </button>
+                            {isReadOnly ? (
+                              <>
+                                <button
+                                  onClick={() => handleCopyToolCode(tc)}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '6px 12px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    borderRadius: '6px',
+                                    border: '1px solid rgba(245, 158, 11, 0.4)',
+                                    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                                    color: '#fbbf24',
+                                    cursor: 'pointer'
+                                  }}
+                                  title="Copy YAML / JSON code to clipboard for manual paste into Home Assistant"
+                                >
+                                  <Copy size={13} /> Copy Code
+                                </button>
+
+                                <button
+                                  onClick={() => handleDownloadToolCode(tc)}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '6px 12px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    borderRadius: '6px',
+                                    border: '1px solid rgba(56, 189, 248, 0.4)',
+                                    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                                    color: '#38bdf8',
+                                    cursor: 'pointer'
+                                  }}
+                                  title="Download configuration file for manual import"
+                                >
+                                  <Download size={13} /> Download
+                                </button>
+                              </>
+                            ) : (
+                              /* 1-Click Commit Button */
+                              <button
+                                onClick={() => handleCommitAutomationDirect(tc)}
+                                disabled={isCommitted}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '6px 14px',
+                                  fontSize: '12px',
+                                  fontWeight: 600,
+                                  borderRadius: '6px',
+                                  border: 'none',
+                                  cursor: isCommitted ? 'default' : 'pointer',
+                                  backgroundColor: isCommitted ? '#065f46' : '#2563eb',
+                                  color: '#ffffff'
+                                }}
+                              >
+                                {isCommitted ? <CheckCircle size={14} /> : <Zap size={14} />}
+                                {isCommitted ? '✓ Committed' : '⚡ Commit to HA'}
+                              </button>
+                            )}
 
                             <button
                               onClick={() => setExpandedResults(prev => ({ ...prev, [tc.id]: !prev[tc.id] }))}

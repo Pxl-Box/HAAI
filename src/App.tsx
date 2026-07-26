@@ -28,8 +28,11 @@ export const App: React.FC = () => {
   const [activeProviderId, setActiveProviderId] = useState<string>('ollama');
   const [activeProvider, setActiveProvider] = useState<AIProviderConfig>(DEFAULT_PROVIDERS['ollama']);
 
-  // Modals
+  // Modals & Mode State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isReadOnly, setIsReadOnly] = useState<boolean>(false);
+  const [isSyncingTwin, setIsSyncingTwin] = useState<boolean>(false);
+  const [syncSuccessMessage, setSyncSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     // Initialize saved credentials and check onboarding
@@ -38,6 +41,9 @@ export const App: React.FC = () => {
     const savedActiveProviderId = StorageService.getActiveProviderId();
     const savedThreads = StorageService.getChatThreads();
     const savedActiveThreadId = StorageService.getActiveThreadId();
+    const savedReadOnly = StorageService.getReadOnlyMode();
+
+    setIsReadOnly(savedReadOnly);
 
     if (savedHA && savedHA.baseUrl && savedHA.token) {
       setHaConfig(savedHA);
@@ -179,11 +185,39 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleToggleReadOnly = () => {
+    const nextMode = !isReadOnly;
+    setIsReadOnly(nextMode);
+    StorageService.setReadOnlyMode(nextMode);
+  };
+
+  const handleSyncDigitalTwin = async () => {
+    setIsSyncingTwin(true);
+    setSyncSuccessMessage(null);
+    try {
+      const twin = await LocalPreProcessor.syncDigitalTwin();
+      setSyncSuccessMessage(`Synced ${twin.entityCount} entities & ${twin.areas?.length || 0} areas`);
+      setTimeout(() => setSyncSuccessMessage(null), 4000);
+    } catch (err: any) {
+      console.error('Digital Twin sync failed:', err);
+    } finally {
+      setIsSyncingTwin(false);
+    }
+  };
+
   const activeThread = threads.find(t => t.id === activeThreadId);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
-      <Titlebar haStatus={haConnected} activeModel={`${activeProvider.name} (${activeProvider.selectedModel})`} />
+      <Titlebar
+        haStatus={haConnected}
+        activeModel={`${activeProvider.name} (${activeProvider.selectedModel})`}
+        isReadOnly={isReadOnly}
+        onToggleReadOnly={handleToggleReadOnly}
+        onSyncDigitalTwin={handleSyncDigitalTwin}
+        isSyncingTwin={isSyncingTwin}
+        syncSuccessMessage={syncSuccessMessage}
+      />
 
       {!isOnboarded ? (
         <Onboarding onComplete={handleOnboardingComplete} />
@@ -210,6 +244,7 @@ export const App: React.FC = () => {
             providerName={activeProvider.name}
             isSending={isSending}
             isLocalProvider={activeProvider.isLocal}
+            isReadOnly={isReadOnly}
           />
         </div>
       )}

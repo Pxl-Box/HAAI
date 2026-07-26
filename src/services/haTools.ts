@@ -152,8 +152,23 @@ export const HA_TOOLS: ToolDefinition[] = [
   }
 ];
 
+import { StorageService } from './storage';
+
 export async function executeHATool(call: AIToolCall): Promise<AIToolResult> {
   const { name, arguments: args, id } = call;
+
+  // Check if Manual Read-Only Mode is active
+  const isReadOnly = StorageService.getReadOnlyMode();
+  const readOnlyAllowedTools = new Set(['get_entities', 'get_areas_and_floors', 'get_dashboard_config', 'analyze_entity_rename_safety']);
+
+  if (isReadOnly && !readOnlyAllowedTools.has(name)) {
+    return {
+      toolCallId: id,
+      name,
+      success: false,
+      error: 'Manual Read-Only Mode is active. Direct live modifications are disabled. Use Copy / Download Code to apply changes manually.'
+    };
+  }
 
   try {
     switch (name) {

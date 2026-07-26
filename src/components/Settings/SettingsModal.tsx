@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Server, Cpu, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { X, Server, Cpu, CheckCircle2, AlertCircle, RefreshCw, Brain, Plus, Trash2 } from 'lucide-react';
 import { HAConfig } from '../../types/homeassistant';
 import { AIProviderConfig, AIProviderId } from '../../types/ai';
 import { haService } from '../../services/haClient';
@@ -17,7 +17,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   onSettingsSaved
 }) => {
-  const [activeTab, setActiveTab] = useState<'ha' | 'ai'>('ha');
+  const [activeTab, setActiveTab] = useState<'ha' | 'ai' | 'brain'>('ha');
 
   // HA State
   const [haUrl, setHaUrl] = useState('');
@@ -31,6 +31,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [aiTesting, setAiTesting] = useState(false);
   const [aiStatus, setAiStatus] = useState<{ success?: boolean; message?: string }>({});
 
+  // Brain Memory State
+  const [brainMemories, setBrainMemories] = useState<string[]>([]);
+  const [newMemoryInput, setNewMemoryInput] = useState('');
+
   useEffect(() => {
     if (isOpen) {
       const ha = StorageService.getHAConfig();
@@ -42,8 +46,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const currentActive = StorageService.getActiveProviderId() as AIProviderId;
       setProviders({ ...DEFAULT_PROVIDERS, ...savedProviders });
       setActiveProviderId(currentActive || 'ollama');
+
+      setBrainMemories(StorageService.getBrainMemory());
     }
   }, [isOpen]);
+
+  const handleAddMemory = () => {
+    if (!newMemoryInput.trim()) return;
+    const updated = StorageService.addBrainMemoryItem(newMemoryInput.trim());
+    setBrainMemories(updated);
+    setNewMemoryInput('');
+  };
+
+  const handleRemoveMemory = (index: number) => {
+    const updated = StorageService.removeBrainMemoryItem(index);
+    setBrainMemories(updated);
+  };
 
   if (!isOpen) return null;
 
@@ -163,7 +181,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               gap: '8px'
             }}
           >
-            <Cpu size={16} /> AI Model & Provider Setup
+            <Cpu size={16} /> AI Provider Config
+          </button>
+
+          <button
+            onClick={() => setActiveTab('brain')}
+            style={{
+              flex: 1,
+              padding: '12px',
+              border: 'none',
+              background: activeTab === 'brain' ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
+              color: activeTab === 'brain' ? '#c084fc' : '#9ca3af',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px'
+            }}
+          >
+            <Brain size={16} /> Brain Memory (Learned Context)
           </button>
         </div>
 
@@ -343,6 +381,73 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button className="btn btn-secondary" onClick={handleTestAI} disabled={aiTesting}>
                 {aiTesting ? 'Testing...' : 'Test AI & Fetch Models'}
               </button>
+            </div>
+          )}
+
+          {activeTab === 'brain' && (
+            <div>
+              <div style={{
+                padding: '12px 16px',
+                backgroundColor: 'rgba(168, 85, 247, 0.1)',
+                border: '1px solid rgba(168, 85, 247, 0.25)',
+                borderRadius: '8px',
+                marginBottom: '20px',
+                fontSize: '13px',
+                color: '#e9d5ff'
+              }}>
+                <strong>🧠 HAAI Agent Brain (`brain.md`)</strong>
+                <p style={{ marginTop: '4px', fontSize: '12px', color: '#c084fc', margin: 0 }}>
+                  Store household rules, entity naming preferences, or custom hardware notes here. Any AI model you select will automatically read these instructions from your local Digital Twin source of truth!
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="e.g. Always place hallway automations into the Front Door area"
+                  value={newMemoryInput}
+                  onChange={e => setNewMemoryInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddMemory()}
+                />
+                <button className="btn btn-primary" onClick={handleAddMemory} style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                  <Plus size={16} /> Add Fact
+                </button>
+              </div>
+
+              <div style={{ maxHeight: '250px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {brainMemories.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '24px 0', color: '#9ca3af', fontSize: '13px' }}>
+                    No learned facts or instructions added yet. Type a rule above to teach your AI assistant!
+                  </div>
+                ) : (
+                  brainMemories.map((fact, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 14px',
+                        backgroundColor: '#1f2937',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        color: '#f3f4f6'
+                      }}
+                    >
+                      <span>• {fact}</span>
+                      <button
+                        onClick={() => handleRemoveMemory(idx)}
+                        style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                        title="Remove instruction"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
         </div>

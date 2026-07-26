@@ -9,6 +9,23 @@
     "dist": "npm run build:electron && electron-builder"
   },
   "keywords": ["home-assistant", "ai", "electron", "smart-home", "ollama", "claude", "openai", "gemini"],
+  "build": {
+    "appId": "com.haai.app",
+    "productName": "HAAI",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "directories": {
+      "output": "builds/win"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    }
+  },
   "author": "Antigravity",
   "license": "MIT",
   "dependencies": {
