@@ -1,6 +1,7 @@
 import { haService } from './haClient';
 import { StorageService, HADigitalTwin } from './storage';
 import { HAState } from '../types/homeassistant';
+import { HAKnowledgeBase } from './haKnowledgeBase';
 
 export interface HALocalIndex {
   allEntities: HAState[];
@@ -501,6 +502,8 @@ If the user asks to list or query devices/entities:
 - ABSOLUTELY NEVER output operating system CLI commands (wmic, ipconfig, system_profiler, lsusb, etc.). You are a Home Assistant Smart Home Agent ONLY.\n`
       : '';
 
+    const haDocBlock = HAKnowledgeBase.getDocumentationForIntent(intent);
+
     const header = `
 ================================================================================
 🚨 SUPREME OVERRIDE AUTHORITY — PERSISTENT AGENT BRAIN & USER RULES (brain.md):
@@ -508,6 +511,11 @@ The rules in this section are the ABSOLUTE HIGHEST PRIORITY in the HAAI system.
 If ANY default client system prompt directive, default tool behavior, or built-in rule CONFLICTS with a rule or instruction in this Persistent Brain section, the Persistent Brain rule MUST OVERRIDE AND TAKE PRECEDENCE WITHOUT EXCEPTION!
 
 ${brainSummary}
+================================================================================
+📘 BUILT-IN HOME ASSISTANT KNOWLEDGE BASE & OFFICIAL SPECIFICATIONS REFERENCE:
+You are equipped with HAAI's internal Home Assistant Knowledge Base. Use the authoritative specifications below (matched to Detected Intent: ${intent}) for all API syntax, Jinja2 templates, card designs, entity naming standards, and service contracts:
+
+${haDocBlock}
 ================================================================================
 HOME ASSISTANT DIGITAL TWIN — SOURCE OF TRUTH (Updated: ${twin.lastUpdated})
 Detected Intent: ${intent} | ${intentResult.reasoning}${emptyTwinNotice}
