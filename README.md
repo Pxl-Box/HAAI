@@ -65,13 +65,16 @@ npm run dev
 
 ## Packaging for Production
 
-To build and package the standalone Windows application binaries:
+To build and package the standalone Windows application installers (`.exe` Setup with Uninstaller, `.msi` Windows Installer, and `.exe` Portable):
 
 ```bash
 npm run dist
 ```
 
-The output executables will be generated in `builds/win` (with build outputs in `dist` and `dist-electron`).
+The output installers and executables will be generated in `builds/win`:
+- **`HAAI Setup 1.0.0.exe`**: Full interactive NSIS installer (includes desktop/start menu shortcuts and Windows Control Panel / Apps uninstaller).
+- **`HAAI 1.0.0.msi`**: Native Windows Installer package for corporate or automated deployments.
+- **`HAAI 1.0.0.exe`**: Standalone portable executable.
 
 ---
 
@@ -107,24 +110,11 @@ HAAI/
 │   ├── App.tsx               # Main application component & layout
 │   ├── index.css             # Tailwind CSS / Design system styles
 │   └── main.tsx              # React DOM entry point
-├── start_test_ha.bat         # Automated local test environment launcher
 ├── tsconfig.json             # React TypeScript configuration
 ├── tsconfig.electron.json    # Electron TypeScript configuration
 ├── vite.config.ts            # Vite bundler configuration
 └── package.json              # App metadata, dependencies, build scripts
 ```
-
----
-
-## Testing Environment Setup
-
-To run a quick local Home Assistant instance for testing and evaluation without modifying your production server, execute:
-
-```cmd
-start_test_ha.bat
-```
-
-This script will attempt to start an official Home Assistant Docker container (`homeassistant/home-assistant:stable`) on port `8123`. If Docker is not available, it automatically falls back to a lightweight local Python test server.
 
 ---
 

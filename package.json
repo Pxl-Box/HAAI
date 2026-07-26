@@ -20,10 +20,26 @@
       "output": "builds/win"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
+        "msi",
         "portable"
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "HAAI",
+      "uninstallDisplayName": "HAAI (Home Assistant AI Assistant)",
+      "runAfterFinish": true
+    },
+    "msi": {
+      "oneClick": false,
+      "shortcutName": "HAAI",
+      "createDesktopShortcut": true
     }
   },
   "author": "Antigravity",
