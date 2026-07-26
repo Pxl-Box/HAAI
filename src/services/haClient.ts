@@ -121,7 +121,11 @@ export class HAService {
         version: data.version
       };
     } catch (err: any) {
-      return { success: false, message: err.message || 'Failed to reach Home Assistant instance.' };
+      const isCorsOrNetwork = err.name === 'TypeError' || err.message === 'Failed to fetch';
+      const msg = isCorsOrNetwork
+        ? `Failed to reach Home Assistant (${url}). If accessing via browser, ensure CORS is allowed in HA configuration.yaml (cors_allowed_origins: ["${window.location.origin}"])`
+        : (err.message || 'Failed to reach Home Assistant instance.');
+      return { success: false, message: msg };
     }
   }
 

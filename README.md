@@ -59,10 +59,49 @@ npm run dev
 To compile and package the desktop application into a standalone Windows executable:
 
 ```bash
-npm run build
+npm run build:electron && npx electron-builder
 ```
 
 The output binary will be generated inside the `dist` and `dist-electron` directories.
+
+---
+
+## Running with Docker (Web UI Mode)
+
+HAAI can be containerized and run as a Web UI application accessible via browser on your local network or server.
+
+### 1. Using Docker Compose (Recommended)
+
+To start the HAAI Web UI container on port `8111`:
+
+```bash
+docker compose up -d
+```
+
+Access the Web UI by navigating to `http://localhost:8111` (or `http://<your-server-ip>:8111`).
+
+### 2. Building & Running Standalone Docker Container
+
+```bash
+# Build the Docker image
+docker build -t haai-web:latest .
+
+# Run container on port 8111
+docker run -d --name haai-web -p 8111:80 haai-web:latest
+```
+
+### 3. Configuring CORS for Browser Web UI
+
+When accessing HAAI via a web browser (instead of the Electron desktop app), browsers enforce Cross-Origin Resource Sharing (CORS):
+
+- **Home Assistant**: Ensure your Home Assistant `configuration.yaml` permits requests from your HAAI Web UI origin:
+  ```yaml
+  http:
+    cors_allowed_origins:
+      - "http://localhost:8111"
+      - "http://192.168.1.100:8111" # Replace with your Docker host IP
+  ```
+- **Ollama (Local LLM)**: Set `OLLAMA_ORIGINS="*"` on your Ollama service/container to allow web UI connections.
 
 ---
 

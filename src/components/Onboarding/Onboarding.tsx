@@ -37,6 +37,24 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     }
   };
 
+  const handleNextStep1 = async () => {
+    if (!haUrl.trim() || !haToken.trim()) return;
+    if (haStatus.success) {
+      setStep(2);
+      return;
+    }
+    setHaTesting(true);
+    setHaStatus({});
+    const res = await haService.testConnection(haUrl, haToken);
+    setHaTesting(false);
+    setHaStatus(res);
+    if (res.success) {
+      haService.setConfig({ baseUrl: haUrl, token: haToken });
+      StorageService.saveHAConfig({ baseUrl: haUrl, token: haToken });
+      setStep(2);
+    }
+  };
+
   const handleProviderSelect = (id: AIProviderId) => {
     setSelectedProviderId(id);
     const existing = StorageService.getAIProviders()[id] || DEFAULT_PROVIDERS[id];
@@ -155,10 +173,10 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
               </button>
               <button
                 className="btn btn-primary"
-                onClick={() => setStep(2)}
-                disabled={!haStatus.success}
+                onClick={handleNextStep1}
+                disabled={!haUrl.trim() || !haToken.trim() || haTesting}
               >
-                Next: Connect AI <ArrowRight size={16} />
+                {haTesting ? 'Connecting...' : 'Next: Connect AI'} <ArrowRight size={16} />
               </button>
             </div>
           </div>
